@@ -276,6 +276,7 @@ jobs:
           env -i \
             PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
             HOME="$SAFE_HOME" \
+            SAFE_HOME="$SAFE_HOME" \
             TMPDIR="$ISOLATED_TMPDIR" \
             USER=runner \
             LOGNAME=runner \
