@@ -227,7 +227,7 @@ jobs:
               paths = subprocess.run(["git", "-C", str(root), "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$"], capture_output=True, text=True)
               for line in paths.stdout.splitlines():
                   key, path = line.split(None, 1)
-                  url_key = key[:-4] + ".url"
+                  url_key = key[:-5] + ".url"
                   url = subprocess.check_output(["git", "-C", str(root), "config", "-f", ".gitmodules", "--get", url_key], text=True).strip()
                   declared[path] = url
           records = []
