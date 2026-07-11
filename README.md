@@ -2,7 +2,7 @@
 
 This private builder creates reproducible **unsigned** iOS IPAs from explicitly licensed or otherwise authorized public source. It does not download or repackage prebuilt IPAs and stores no Apple signing material.
 
-The initial target is official NuvioMobile release `0.2.20` at commit `70004b7b825a8b9fa672a40ec92062884ddf4901`, built as the upstream `full` iOS distribution with Xcode 16.3 on `macos-15-intel`. The source embeds app version `1.1.20` build `92`, so both versions are reported. Xcode 16.3 is the minimum compatible pin because this source uses the Swift 6.1 trailing-comma syntax implemented after Xcode 16.2.
+The initial target is official NuvioMobile release `0.2.20` at commit `70004b7b825a8b9fa672a40ec92062884ddf4901`, built as the upstream `full` iOS distribution with Xcode 16.4 on `macos-15-intel`. The source embeds app version `1.1.20` build `92`, so both versions are reported. Xcode 16.4 supplies the required Swift 6.1 syntax and is the newest complete Xcode 16 toolchain on the GitHub runner image.
 
 The pinned MPVKit submodule predates that fork's standalone license file. The builder records this explicitly and checksum-pins the repository-level LGPL-3.0 license from MPVKit commit `ca111517f60e4631fd0b9a3fd0d03689e9f38b8a`; it never presents that later license file as if it existed in the older source tree.
 
