@@ -15,7 +15,7 @@
     "path": "iosApp/iosApp.xcodeproj"
   },
   "scheme": "iosApp",
-  "configuration": "Release",
+  "configuration": "Debug",
   "build_action": "archive",
   "bootstrap": {
     "kind": "adapter",

@@ -8,7 +8,7 @@ The pinned MPVKit submodule predates that fork's standalone license file. The bu
 
 The Nuvio adapter creates an empty, untracked `local.properties` compatibility stub. Nuvio's Gradle task declares that file optional and supplies empty runtime-service defaults, but Gradle 9.4 rejects the assigned missing input before the task runs. The adapter never adds credentials to the file and verifies that tracked upstream source remains unchanged.
 
-The Intel runner memory budget is explicitly bounded: 3 GB for Gradle, 0.5 GB for the Kotlin daemon, and 9 GB for the Kotlin/Native Release linker. The adapter installs a checked-in `gradle.properties` into its isolated `GRADLE_USER_HOME`, whose properties take precedence over Nuvio's project-level 12/8/16 GB settings. The larger native-link allowance is required by Nuvio's full-distribution LTO/devirtualization pass while keeping aggregate JVM caps below the runner's 14 GB RAM.
+The committed Nuvio target uses a physical-device Debug archive so it can build on GitHub's free 14 GB Intel runner. Nuvio 0.2.20's Kotlin/Native 2.3.0 Release devirtualization exceeded even a 10.5 GB compiler heap; using Debug avoids that optimizer while preserving the exact official source commit, `full` distribution, device platform, and unsigned packaging checks. The adapter installs checked-in memory bounds into its isolated `GRADLE_USER_HOME`, taking precedence over Nuvio's project-level 12/8/16 GB settings.
 
 ## Commands
 
