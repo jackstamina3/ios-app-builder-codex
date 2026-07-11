@@ -1,6 +1,6 @@
 # Unsigned iOS Builder Guidance
 
-This private repository reproducibly builds unsigned iOS IPAs from authorized public source. Never download, decrypt, patch, or repackage an App Store or other proprietary IPA.
+This public repository reproducibly builds unsigned iOS IPAs from authorized public source. Treat workflow logs and artifacts as public. Never download, decrypt, patch, or repackage an App Store or other proprietary IPA.
 
 ## Required operating procedure
 
@@ -22,4 +22,3 @@ This private repository reproducibly builds unsigned iOS IPAs from authorized pu
 ## Verification
 
 Run `python3 -m unittest discover -s tests`, `bash -n` on shell files, Python compilation, and `python3 tests/test_workflow_policy.py` after changes.
-

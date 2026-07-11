@@ -4,7 +4,7 @@ set -euo pipefail
 gh auth status --hostname github.com >/dev/null
 repo="${1:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 visibility="$(gh repo view "$repo" --json visibility --jq .visibility)"
-[[ "$visibility" == PRIVATE ]] || { echo "Refusing to harden a non-private repository" >&2; exit 1; }
+[[ "$visibility" == PUBLIC ]] || { echo "Refusing to harden a non-public builder repository" >&2; exit 1; }
 api='2026-03-10'
 base="repos/$repo"
 
@@ -19,4 +19,3 @@ gh api -H "X-GitHub-Api-Version: $api" "$base/actions/permissions/selected-actio
 gh api -H "X-GitHub-Api-Version: $api" "$base/actions/permissions/workflow"
 gh api -H "X-GitHub-Api-Version: $api" "$base/actions/permissions/artifact-and-log-retention"
 gh api -H "X-GitHub-Api-Version: $api" "$base/actions/permissions/access"
-

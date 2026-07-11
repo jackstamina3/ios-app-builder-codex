@@ -1,6 +1,6 @@
 # Codex-Native Unsigned iOS IPA Builder
 
-This private builder creates reproducible **unsigned** iOS IPAs from explicitly licensed or otherwise authorized public source. It does not download or repackage prebuilt IPAs and stores no Apple signing material.
+This public builder creates reproducible **unsigned** iOS IPAs from explicitly licensed or otherwise authorized public source. It does not download or repackage prebuilt IPAs and stores no Apple signing material. Public visibility permits free use of standard GitHub-hosted runners; workflow logs and published build artifacts must therefore be treated as public information.
 
 The initial target is official NuvioMobile release `0.2.20` at commit `70004b7b825a8b9fa672a40ec92062884ddf4901`, built as the upstream `full` iOS distribution with Xcode 16.4 on `macos-15-intel`. The source embeds app version `1.1.20` build `92`, so both versions are reported. Xcode 16.4 supplies the required Swift 6.1 syntax and is the newest complete Xcode 16 toolchain on the GitHub runner image.
 
@@ -18,7 +18,7 @@ bin/probe-source NuvioMedia/NuvioMobile 0.2.20
 bin/build-target targets/NuvioMedia__NuvioMobile__70004b7.json
 ```
 
-The build dispatcher requires a clean `main` exactly matching `origin/main`, a private repository, and authenticated GitHub CLI. Successful artifacts are downloaded under `dist/REQUEST_ID/`, reverified locally, and reported with an absolute path and SHA-256.
+The build dispatcher requires a clean `main` exactly matching `origin/main`, the authorized public builder repository, and authenticated GitHub CLI. Successful artifacts are downloaded under `dist/REQUEST_ID/`, reverified locally, and reported with an absolute path and SHA-256.
 
 ## Threat model
 

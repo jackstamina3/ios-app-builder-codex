@@ -13,7 +13,7 @@ remote_url="$(git remote get-url origin)"
 repo="$(sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##' <<<"$remote_url")"
 [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Cannot derive GitHub repository from origin" >&2; exit 1; }
 visibility="$(gh repo view "$repo" --json visibility --jq .visibility)"
-[[ "$visibility" == PRIVATE ]] || { echo "Builder repository must be private" >&2; exit 1; }
+[[ "$visibility" == PUBLIC ]] || { echo "Builder repository must be public for free standard GitHub-hosted runners" >&2; exit 1; }
 
 [[ -z "$(git status --porcelain)" ]] || { echo "Working tree must be clean" >&2; exit 1; }
 head_sha="$(git rev-parse HEAD)"
