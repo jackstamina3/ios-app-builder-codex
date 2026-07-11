@@ -85,9 +85,9 @@ test -x "$java_home/bin/java" || { echo "Java 17 is unavailable" >&2; exit 1; }
 cat >"$ADAPTER_ENV_FILE" <<EOF
 JAVA_HOME=$java_home
 GRADLE_USER_HOME=$gradle_home
-GRADLE_OPTS=-Xmx1024m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m -Dorg.gradle.jvmargs=-Xmx2048m -Dkotlin.daemon.jvmargs=-Xmx1536m -Dkotlin.native.jvmArgs=-Xmx7168m
-KOTLIN_DAEMON_JVMARGS=-Xmx1536m
-ORG_GRADLE_PROJECT_org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=768m
-ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs=-Xmx1536m
-ORG_GRADLE_PROJECT_kotlin.native.jvmArgs=-Xmx7168m
+GRADLE_OPTS=-Xmx512m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=384m -Dorg.gradle.jvmargs=-Xmx1536m -Dkotlin.daemon.jvmargs=-Xmx1024m -Dkotlin.native.jvmArgs=-Xmx10240m
+KOTLIN_DAEMON_JVMARGS=-Xmx1024m
+ORG_GRADLE_PROJECT_org.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=640m
+ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs=-Xmx1024m
+ORG_GRADLE_PROJECT_kotlin.native.jvmArgs=-Xmx10240m
 EOF
