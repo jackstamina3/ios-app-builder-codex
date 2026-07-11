@@ -1,0 +1,481 @@
+name: Build and verify unsigned IPA
+
+run-name: Build ${{ inputs.target }} (${{ inputs.request_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Relative target manifest path under targets/
+        required: true
+        type: string
+      request_id:
+        description: Canonical lowercase UUID used to correlate this run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Validate committed target
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_REQUEST_ID: ${{ inputs.request_id }}
+    outputs:
+      runner: ${{ steps.target.outputs.runner }}
+      source_repository: ${{ steps.target.outputs.source_repository }}
+      source_ref: ${{ steps.target.outputs.source_ref }}
+      source_commit: ${{ steps.target.outputs.source_commit }}
+      xcode_version: ${{ steps.target.outputs.xcode_version }}
+      license_file: ${{ steps.target.outputs.license_file }}
+      expected_app_bundle: ${{ steps.target.outputs.expected_app_bundle }}
+      builder_sha: ${{ steps.revision.outputs.builder_sha }}
+    steps:
+      - name: Check out immutable builder revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Validate request correlation ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$INPUT_REQUEST_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+
+      - name: Validate target and emit allowlisted build plan
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$INPUT_TARGET" =~ ^targets/[A-Za-z0-9_.-]+\.json$ ]]
+          [[ "$INPUT_TARGET" != *..* ]]
+          test -f "$INPUT_TARGET"
+          python3 scripts/validate_target.py "$INPUT_TARGET" --github-output "$GITHUB_OUTPUT"
+
+      - name: Record immutable builder revision
+        id: revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          builder_sha="$(git rev-parse HEAD)"
+          [[ "$builder_sha" == "${GITHUB_SHA}" ]]
+          printf 'builder_sha=%s\n' "$builder_sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build quarantined app
+    needs: plan
+    runs-on: ${{ needs.plan.outputs.runner }}
+    timeout-minutes: 90
+    env:
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_REQUEST_ID: ${{ inputs.request_id }}
+      SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}
+      SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
+      SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
+      XCODE_VERSION: ${{ needs.plan.outputs.xcode_version }}
+      LICENSE_FILE: ${{ needs.plan.outputs.license_file }}
+      EXPECTED_APP_BUNDLE: ${{ needs.plan.outputs.expected_app_bundle }}
+    steps:
+      - name: Check out immutable builder revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.builder_sha }}
+
+      - name: Revalidate target at builder revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${{ needs.plan.outputs.builder_sha }}" ]]
+          python3 scripts/validate_target.py "$INPUT_TARGET"
+
+      - name: Prepare isolated build directories and select Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          safe_home="$RUNNER_TEMP/safe-home"
+          source_dir="$RUNNER_TEMP/source"
+          build_dir="$RUNNER_TEMP/build"
+          output_dir="$RUNNER_TEMP/quarantine"
+          diagnostics_dir="$RUNNER_TEMP/diagnostics"
+          temp_dir="$RUNNER_TEMP/build-tmp"
+          mkdir -p "$safe_home" "$source_dir" "$build_dir" "$output_dir" "$diagnostics_dir" "$temp_dir"
+
+          xcode_app="/Applications/Xcode_${XCODE_VERSION}.app"
+          developer_dir="$xcode_app/Contents/Developer"
+          if [[ ! -d "$developer_dir" ]]; then
+            find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print | sort
+            exit 1
+          fi
+          DEVELOPER_DIR="$developer_dir" xcodebuild -version
+          DEVELOPER_DIR="$developer_dir" xcrun --sdk iphoneos --show-sdk-version
+
+          {
+            printf 'SAFE_HOME=%s\n' "$safe_home"
+            printf 'SOURCE_DIR=%s\n' "$source_dir"
+            printf 'BUILD_DIR=%s\n' "$build_dir"
+            printf 'OUTPUT_DIR=%s\n' "$output_dir"
+            printf 'DIAGNOSTICS_DIR=%s\n' "$diagnostics_dir"
+            printf 'ISOLATED_TMPDIR=%s\n' "$temp_dir"
+            printf 'SELECTED_DEVELOPER_DIR=%s\n' "$developer_dir"
+            printf 'TARGET_JSON=%s/%s\n' "$GITHUB_WORKSPACE" "$INPUT_TARGET"
+          } >> "$GITHUB_ENV"
+
+      - name: Clone and verify exact public source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$SOURCE_DIR"
+          git -C "$SOURCE_DIR" remote add origin "https://github.com/${SOURCE_REPOSITORY}.git"
+          if ! git -C "$SOURCE_DIR" fetch --no-tags --depth=1 origin "$SOURCE_COMMIT"; then
+            git -C "$SOURCE_DIR" fetch --no-tags --depth=1 origin "$SOURCE_REF"
+          fi
+          git -C "$SOURCE_DIR" checkout --detach FETCH_HEAD
+          actual_commit="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+          [[ "$actual_commit" == "$SOURCE_COMMIT" ]]
+          python3 - "$SOURCE_DIR" "$LICENSE_FILE" <<'PY'
+          import pathlib, sys
+          root = pathlib.Path(sys.argv[1]).resolve()
+          license_path = (root / sys.argv[2]).resolve(strict=True)
+          try:
+              license_path.relative_to(root)
+          except ValueError:
+              raise SystemExit("license path escapes source root")
+          if not license_path.is_file():
+              raise SystemExit("license path is not a regular file")
+          PY
+
+          if [[ -f "$SOURCE_DIR/.gitattributes" ]] && grep -Eq 'filter=lfs|filter[[:space:]]*=[[:space:]]*lfs' "$SOURCE_DIR/.gitattributes"; then
+            git -C "$SOURCE_DIR" lfs install --local
+            git -C "$SOURCE_DIR" lfs pull
+          fi
+          python3 - "$SOURCE_DIR" <<'PY'
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          def initialize_modules(root):
+              modules = root / ".gitmodules"
+              if not modules.exists():
+                  return
+              raw = subprocess.run(
+                  ["git", "-C", str(root), "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.url$"],
+                  check=False, capture_output=True, text=True,
+              )
+              if raw.returncode not in (0, 1):
+                  raise SystemExit("cannot parse .gitmodules")
+              for line in raw.stdout.splitlines():
+                  key, url = line.split(None, 1)
+                  if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?", url):
+                      raise SystemExit(f"unsupported submodule URL: {url!r}")
+                  path_key = key[:-4] + ".path"
+                  path = subprocess.run(
+                      ["git", "-C", str(root), "config", "-f", ".gitmodules", "--get", path_key],
+                      check=True, capture_output=True, text=True,
+                  ).stdout.rstrip("\n")
+                  if not path or os.path.isabs(path) or pathlib.PurePosixPath(path).parts.count(".."):
+                      raise SystemExit(f"unsafe submodule path: {path!r}")
+                  entry = subprocess.run(
+                      ["git", "-C", str(root), "ls-files", "-s", "--", path],
+                      check=True, capture_output=True, text=True,
+                  ).stdout
+                  if not entry.startswith("160000 "):
+                      raise SystemExit(f"submodule is not pinned by a gitlink: {path!r}")
+                  expected = entry.split()[1]
+                  subprocess.run(
+                      ["git", "-C", str(root),
+                       "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
+                       "submodule", "update", "--init", "--depth=1", "--", path],
+                      check=True,
+                  )
+                  child = (root / path).resolve()
+                  try:
+                      child.relative_to(root.resolve())
+                  except ValueError:
+                      raise SystemExit(f"submodule escaped source root: {path!r}")
+                  actual = subprocess.run(
+                      ["git", "-C", str(child), "rev-parse", "HEAD"],
+                      check=True, capture_output=True, text=True,
+                  ).stdout.strip()
+                  if actual != expected:
+                      raise SystemExit(f"submodule commit mismatch: {path!r}")
+                  initialize_modules(child)
+
+          initialize_modules(pathlib.Path(sys.argv[1]).resolve())
+          PY
+          python3 - "$SOURCE_DIR" "$OUTPUT_DIR/submodules.json" "$DIAGNOSTICS_DIR/submodules.txt" <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          root = pathlib.Path(sys.argv[1]).resolve()
+          modules = root / ".gitmodules"
+          declared = {}
+          if modules.exists():
+              paths = subprocess.run(["git", "-C", str(root), "config", "-f", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$"], capture_output=True, text=True)
+              for line in paths.stdout.splitlines():
+                  key, path = line.split(None, 1)
+                  url_key = key[:-4] + ".url"
+                  url = subprocess.check_output(["git", "-C", str(root), "config", "-f", ".gitmodules", "--get", url_key], text=True).strip()
+                  declared[path] = url
+          records = []
+          for line in subprocess.check_output(["git", "-C", str(root), "ls-files", "-s"], text=True).splitlines():
+              fields = line.split(None, 3)
+              if len(fields) != 4 or fields[0] != "160000":
+                  continue
+              expected, path = fields[1], fields[3]
+              record = {"commit": expected, "path": path}
+              if path not in declared:
+                  record["status"] = "ignored_unmapped_gitlink"
+                  records.append(record)
+                  continue
+              child = (root / path).resolve()
+              actual = subprocess.check_output(["git", "-C", str(child), "rev-parse", "HEAD"], text=True).strip()
+              if actual != expected:
+                  raise SystemExit(f"submodule commit mismatch: {path}")
+              license_files = sorted(str(p.relative_to(child)) for p in child.glob("LICENSE*") if p.is_file())
+              if license_files:
+                  basis = license_files[0]
+              else:
+                  readme = child / "README.md"
+                  text = readme.read_text(encoding="utf-8", errors="replace") if readme.is_file() else ""
+                  if not any(marker in text.lower() for marker in ("gpl", "general public license", "mit license", "apache license", "bsd license", "mozilla public license")):
+                      raise SystemExit(f"submodule has no explicit license basis: {path}")
+                  basis = "README.md"
+              record.update({"status": "initialized", "url": declared[path], "license_basis": basis})
+              records.append(record)
+          rendered = json.dumps(records, indent=2, sort_keys=True) + "\n"
+          pathlib.Path(sys.argv[2]).write_text(rendered, encoding="utf-8")
+          pathlib.Path(sys.argv[3]).write_text(rendered, encoding="utf-8")
+          PY
+          git -C "$SOURCE_DIR" remote remove origin
+
+      - name: Build unsigned archive in scrubbed environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -i \
+            PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            HOME="$SAFE_HOME" \
+            TMPDIR="$ISOLATED_TMPDIR" \
+            USER=runner \
+            LOGNAME=runner \
+            SHELL=/bin/bash \
+            LANG=en_US.UTF-8 \
+            LC_ALL=en_US.UTF-8 \
+            CI=1 \
+            DEVELOPER_DIR="$SELECTED_DEVELOPER_DIR" \
+            BUILDER_DIR="$GITHUB_WORKSPACE" \
+            SOURCE_DIR="$SOURCE_DIR" \
+            BUILD_DIR="$BUILD_DIR" \
+            OUTPUT_DIR="$OUTPUT_DIR" \
+            DIAGNOSTICS_DIR="$DIAGNOSTICS_DIR" \
+            TARGET_JSON="$TARGET_JSON" \
+            REQUEST_ID="$INPUT_REQUEST_ID" \
+            /bin/bash --noprofile --norc "$GITHUB_WORKSPACE/scripts/build_unsigned_app.sh"
+
+      - name: Record metadata and remove signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$BUILD_DIR/app-path.txt"
+          app_bundle="$(sed -n '1p' "$BUILD_DIR/app-path.txt")"
+          [[ "$app_bundle" == "$BUILD_DIR"/* ]]
+          [[ "$(basename "$app_bundle")" == "$EXPECTED_APP_BUNDLE" ]]
+          test -d "$app_bundle"
+          "$GITHUB_WORKSPACE/scripts/remove_signatures.sh" \
+            "$app_bundle" "$OUTPUT_DIR/pre-strip-signing-metadata.json"
+          printf 'APP_BUNDLE=%s\n' "$app_bundle" >> "$GITHUB_ENV"
+
+      - name: Package quarantined IPA and build manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          plist="$APP_BUNDLE/Info.plist"
+          version="$(plutil -extract CFBundleShortVersionString raw -o - "$plist")"
+          build_number="$(plutil -extract CFBundleVersion raw -o - "$plist")"
+          [[ "$version" =~ ^[0-9A-Za-z._-]+$ ]]
+          [[ "$build_number" =~ ^[0-9A-Za-z._-]+$ ]]
+          app_name="${EXPECTED_APP_BUNDLE%.app}"
+          ipa="$OUTPUT_DIR/${app_name}-${version}-${build_number}-${SOURCE_COMMIT:0:7}.unsigned.ipa"
+          "$GITHUB_WORKSPACE/scripts/package_ipa.sh" "$APP_BUNDLE" "$ipa"
+          ipa_count="$(find "$OUTPUT_DIR" -maxdepth 1 -type f -name '*.unsigned.ipa' | wc -l | tr -d ' ')"
+          [[ "$ipa_count" == 1 ]]
+          "$GITHUB_WORKSPACE/scripts/verify_unsigned_ipa.sh" "$ipa" "$OUTPUT_DIR/build-verification.json"
+          python3 scripts/write_build_manifest.py \
+            --target "$TARGET_JSON" \
+            --ipa "$ipa" \
+            --verification "$OUTPUT_DIR/build-verification.json" \
+            --signing-metadata "$OUTPUT_DIR/pre-strip-signing-metadata.json" \
+            --submodules "$OUTPUT_DIR/submodules.json" \
+            --request-id "$INPUT_REQUEST_ID" \
+            --run-id "$GITHUB_RUN_ID" \
+            --output "$OUTPUT_DIR/build-manifest.json"
+          cp "$SOURCE_DIR/$LICENSE_FILE" "$OUTPUT_DIR/LICENSE"
+          python3 - \
+            "$OUTPUT_DIR/source-metadata.json" \
+            "$SOURCE_REPOSITORY" "$SOURCE_REF" "$SOURCE_COMMIT" \
+            "$INPUT_REQUEST_ID" "$GITHUB_RUN_ID" \
+            "${{ needs.plan.outputs.builder_sha }}" "$version" "$build_number" <<'PY'
+          import json, pathlib
+          import sys
+          output, repository, ref, commit, request, run, builder, version, build = sys.argv[1:]
+          pathlib.Path(output).write_text(json.dumps({
+              "repository": repository,
+              "ref": ref,
+              "commit": commit,
+              "request_id": request,
+              "workflow_run_id": run,
+              "builder_commit": builder,
+              "embedded_version": version,
+              "embedded_build": build,
+          }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          (cd "$OUTPUT_DIR" && shasum -a 256 "$(basename "$ipa")" > SHA256SUMS)
+
+      - name: Upload quarantined build for fresh-runner verification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quarantine-${{ inputs.request_id }}
+          path: ${{ env.OUTPUT_DIR }}/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload redacted diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-diagnostics-${{ inputs.request_id }}
+          path: ${{ env.DIAGNOSTICS_DIR }}/
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 9
+
+  verify:
+    name: Verify and publish unsigned IPA
+    needs:
+      - plan
+      - build
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_REQUEST_ID: ${{ inputs.request_id }}
+      SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}
+      SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
+      SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
+      LICENSE_FILE: ${{ needs.plan.outputs.license_file }}
+    steps:
+      - name: Check out identical immutable builder revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.builder_sha }}
+
+      - name: Revalidate target and prepare isolated verification directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${{ needs.plan.outputs.builder_sha }}" ]]
+          python3 scripts/validate_target.py "$INPUT_TARGET"
+          quarantine_dir="$RUNNER_TEMP/quarantine-download"
+          verified_dir="$RUNNER_TEMP/verified"
+          temp_dir="$RUNNER_TEMP/verify-tmp"
+          mkdir -p "$quarantine_dir" "$verified_dir" "$temp_dir" "$RUNNER_TEMP/verify-home"
+          {
+            printf 'QUARANTINE_DIR=%s\n' "$quarantine_dir"
+            printf 'VERIFIED_DIR=%s\n' "$verified_dir"
+            printf 'ISOLATED_TMPDIR=%s\n' "$temp_dir"
+            printf 'TARGET_JSON=%s/%s\n' "$GITHUB_WORKSPACE" "$INPUT_TARGET"
+          } >> "$GITHUB_ENV"
+
+      - name: Download only this request's quarantined build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: quarantine-${{ inputs.request_id }}
+          path: ${{ env.QUARANTINE_DIR }}
+
+      - name: Independently verify quarantined IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          ipa_count="$(find "$QUARANTINE_DIR" -maxdepth 1 -type f -name '*.unsigned.ipa' | wc -l | tr -d ' ')"
+          [[ "$ipa_count" == 1 ]]
+          input_ipa="$(find "$QUARANTINE_DIR" -maxdepth 1 -type f -name '*.unsigned.ipa' -print)"
+          env -i \
+            PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            HOME="$RUNNER_TEMP/verify-home" \
+            TMPDIR="$ISOLATED_TMPDIR" \
+            USER=runner LOGNAME=runner SHELL=/bin/bash \
+            LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 CI=1 \
+            INPUT_IPA="$input_ipa" \
+            OUTPUT_DIR="$VERIFIED_DIR" \
+            TARGET_JSON="$TARGET_JSON" \
+            /bin/bash --noprofile --norc "$GITHUB_WORKSPACE/scripts/verify_unsigned_ipa.sh"
+
+          cp "$input_ipa" "$VERIFIED_DIR/"
+          for metadata in SHA256SUMS build-manifest.json source-metadata.json; do
+            if [[ -f "$QUARANTINE_DIR/$metadata" ]]; then
+              cp "$QUARANTINE_DIR/$metadata" "$VERIFIED_DIR/"
+            fi
+          done
+          (cd "$VERIFIED_DIR" && shasum -a 256 *.unsigned.ipa) > "$VERIFIED_DIR/SHA256SUMS"
+
+      - name: Reacquire license and lock metadata from immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata_source="$RUNNER_TEMP/metadata-source"
+          git init "$metadata_source"
+          git -C "$metadata_source" remote add origin "https://github.com/${SOURCE_REPOSITORY}.git"
+          git -C "$metadata_source" fetch --no-tags --depth=1 origin "$SOURCE_COMMIT"
+          git -C "$metadata_source" checkout --detach FETCH_HEAD
+          [[ "$(git -C "$metadata_source" rev-parse HEAD)" == "$SOURCE_COMMIT" ]]
+          python3 - "$metadata_source" "$LICENSE_FILE" "$VERIFIED_DIR" <<'PY'
+          import pathlib, shutil, sys
+          root = pathlib.Path(sys.argv[1]).resolve()
+          source = (root / sys.argv[2]).resolve(strict=True)
+          try:
+              source.relative_to(root)
+          except ValueError:
+              raise SystemExit("license path escapes source root")
+          if not source.is_file():
+              raise SystemExit("license is not a regular file")
+          destination = pathlib.Path(sys.argv[3]) / "license"
+          destination.mkdir()
+          shutil.copy2(source, destination / "NuvioMobile-LICENSE")
+          locks = pathlib.Path(sys.argv[3]) / "locks"
+          locks.mkdir()
+          for relative in ("gradle/wrapper/gradle-wrapper.properties", "gradle/libs.versions.toml"):
+              candidate = root / relative
+              if candidate.is_file():
+                  shutil.copy2(candidate, locks / candidate.name)
+          PY
+          submodule_url="$(git -C "$metadata_source" config -f .gitmodules --get submodule.MPVKit.url)"
+          [[ "$submodule_url" == 'https://github.com/NuvioMedia/MPVKit.git' ]]
+          git -C "$metadata_source" -c protocol.allow=never -c protocol.https.allow=always submodule update --init --depth=1 -- MPVKit
+          test -f "$metadata_source/MPVKit/README.md"
+          grep -Eqi 'GPL|General Public License' "$metadata_source/MPVKit/README.md"
+          cp "$metadata_source/MPVKit/README.md" "$VERIFIED_DIR/license/MPVKit-README-license-basis.md"
+
+      - name: Upload final verified unsigned IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unsigned-ipa-${{ inputs.request_id }}
+          path: ${{ env.VERIFIED_DIR }}/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

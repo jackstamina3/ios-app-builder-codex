@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() { echo "Usage: bin/probe-source OWNER/REPOSITORY [REF]" >&2; exit 2; }
+[[ $# -ge 1 && $# -le 2 ]] || usage
+source_repo="$1"
+[[ "$source_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage
+gh auth status --hostname github.com >/dev/null
+
+if [[ $# == 2 ]]; then
+  source_ref="$2"
+else
+  source_ref="$(gh api "repos/$source_repo/releases/latest" --jq .tag_name)"
+fi
+source_commit="$(gh api "repos/$source_repo/commits/$source_ref" --jq .sha)"
+[[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "Could not resolve immutable commit" >&2; exit 1; }
+
+root="$(git rev-parse --show-toplevel)"; cd "$root"
+remote_url="$(git remote get-url origin)"
+repo="$(sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##' <<<"$remote_url")"
+request_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+payload="$(jq -n --arg ref main --arg repository "$source_repo" --arg source_ref "$source_ref" --arg commit "$source_commit" --arg request_id "$request_id" '{ref:$ref,inputs:{source_repository:$repository,source_ref:$source_ref,source_commit:$commit,runner:"macos-15-intel",xcode_version:"16.2",request_id:$request_id}}')"
+response="$(printf '%s' "$payload" | gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$repo/actions/workflows/probe-source.yml/dispatches" --input -)"
+run_id="$(jq -r '.workflow_run_id // empty' <<<"$response")"
+if [[ -z "$run_id" ]]; then
+  for _ in {1..30}; do
+    run_id="$(gh run list --repo "$repo" --workflow probe-source.yml --event workflow_dispatch --limit 30 --json databaseId,displayTitle,createdAt --jq ".[] | select(.displayTitle | contains(\"$request_id\")) | select(.createdAt >= \"$started\") | .databaseId" | head -n1)"
+    [[ -n "$run_id" ]] && break
+    sleep 2
+  done
+fi
+[[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Could not correlate probe run" >&2; exit 1; }
+gh run watch "$run_id" --repo "$repo" --exit-status --compact
+destination="probe-output/$request_id"; mkdir -p "$destination"
+gh run download "$run_id" --repo "$repo" --name "probe-$request_id" --dir "$destination"
+report="$(find "$destination" -name probe-report.json -print -quit)"
+python3 -m json.tool "$report"
+printf 'Probe report: %s\nSource commit: %s\n' "$(cd "$(dirname "$report")" && pwd)/$(basename "$report")" "$source_commit"
+

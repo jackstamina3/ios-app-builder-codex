@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jackstamina3/ios-app-builder-codex/schemas/target.schema.json",
+  "title": "Unsigned iOS IPA build target",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "runner",
+    "xcode_version",
+    "working_directory",
+    "container",
+    "scheme",
+    "configuration",
+    "build_action",
+    "bootstrap",
+    "build_environment",
+    "extra_build_settings",
+    "output"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "ref", "commit", "license_spdx", "license_file"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "maxLength": 201
+        },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "commit": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
+        "license_spdx": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*$",
+          "maxLength": 100
+        },
+        "license_file": { "$ref": "#/$defs/sourcePath" }
+      }
+    },
+    "runner": { "enum": ["macos-15", "macos-15-intel"] },
+    "xcode_version": {
+      "type": "string",
+      "pattern": "^[0-9]{1,2}\\.[0-9]{1,2}(\\.[0-9]{1,2})?$"
+    },
+    "working_directory": { "$ref": "#/$defs/sourcePath" },
+    "container": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path"],
+      "properties": {
+        "type": { "enum": ["project", "workspace"] },
+        "path": { "$ref": "#/$defs/sourcePath" }
+      }
+    },
+    "scheme": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "configuration": { "enum": ["Release", "Debug"] },
+    "build_action": { "enum": ["archive", "build"] },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "adapter"],
+      "properties": {
+        "kind": { "enum": ["none", "swiftpm", "cocoapods", "carthage", "adapter"] },
+        "adapter": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^adapters/[A-Za-z0-9_.-]+$", "maxLength": 220 }
+          ]
+        }
+      }
+    },
+    "build_environment": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
+      "additionalProperties": { "type": "string", "maxLength": 4096 }
+    },
+    "extra_build_settings": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Z0-9_]+$" },
+      "additionalProperties": { "type": "string", "maxLength": 4096 }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_app_bundle"],
+      "properties": {
+        "expected_app_bundle": {
+          "type": "string",
+          "pattern": "^[^/\\\\]+\\.app$",
+          "minLength": 5,
+          "maxLength": 255
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sourcePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "not": { "pattern": "(^/|(^|/)\\.\\.(/|$)|\\\\|[\\u0000\\r\\n])" }
+    }
+  }
+}

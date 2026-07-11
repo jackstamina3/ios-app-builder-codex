@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() { echo "Usage: bin/build-target targets/OWNER__REPOSITORY__SHORT_SHA.json" >&2; exit 2; }
+[[ $# == 1 ]] || usage
+target="$1"
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+python3 scripts/validate_target.py "$target"
+gh auth status --hostname github.com >/dev/null
+
+remote_url="$(git remote get-url origin)"
+repo="$(sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##' <<<"$remote_url")"
+[[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Cannot derive GitHub repository from origin" >&2; exit 1; }
+visibility="$(gh repo view "$repo" --json visibility --jq .visibility)"
+[[ "$visibility" == PRIVATE ]] || { echo "Builder repository must be private" >&2; exit 1; }
+
+[[ -z "$(git status --porcelain)" ]] || { echo "Working tree must be clean" >&2; exit 1; }
+head_sha="$(git rev-parse HEAD)"
+git fetch origin main
+remote_sha="$(git rev-parse origin/main)"
+[[ "$head_sha" == "$remote_sha" ]] || { echo "Local HEAD must equal origin/main" >&2; exit 1; }
+
+request_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+payload="$(jq -n --arg ref main --arg target "$target" --arg request_id "$request_id" '{ref:$ref,inputs:{target:$target,request_id:$request_id}}')"
+response="$(printf '%s' "$payload" | gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$repo/actions/workflows/build-unsigned-ipa.yml/dispatches" --input -)"
+run_id="$(jq -r '.workflow_run_id // empty' <<<"$response")"
+
+if [[ -z "$run_id" ]]; then
+  for _ in {1..30}; do
+    run_id="$(gh run list --repo "$repo" --workflow build-unsigned-ipa.yml --event workflow_dispatch --limit 30 --json databaseId,displayTitle,createdAt,headSha --jq ".[] | select(.displayTitle | contains(\"$request_id\")) | select(.headSha == \"$head_sha\") | select(.createdAt >= \"$started\") | .databaseId" | head -n1)"
+    [[ -n "$run_id" ]] && break
+    sleep 2
+  done
+fi
+[[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Could not correlate workflow run for $request_id" >&2; exit 1; }
+
+if ! gh run watch "$run_id" --repo "$repo" --exit-status --compact; then
+  gh run view "$run_id" --repo "$repo" --log-failed || true
+  mkdir -p "dist/$request_id/diagnostics"
+  gh run download "$run_id" --repo "$repo" --name "build-diagnostics-$request_id" --dir "dist/$request_id/diagnostics" || true
+  echo "Build failed; diagnostics: $root/dist/$request_id/diagnostics" >&2
+  exit 1
+fi
+
+destination="dist/$request_id"
+mkdir -p "$destination"
+gh run download "$run_id" --repo "$repo" --name "unsigned-ipa-$request_id" --dir "$destination"
+mapfile_or_die() {
+  local pattern="$1" output="$2"
+  find "$destination" -type f -name "$pattern" -print >"$output"
+  [[ "$(wc -l <"$output" | tr -d ' ')" == 1 ]] || { echo "Expected exactly one $pattern in downloaded artifact" >&2; exit 1; }
+}
+ipa_list="$destination/.ipa-list"; checksum_list="$destination/.checksum-list"; manifest_list="$destination/.manifest-list"
+mapfile_or_die '*.unsigned.ipa' "$ipa_list"
+mapfile_or_die SHA256SUMS "$checksum_list"
+mapfile_or_die build-manifest.json "$manifest_list"
+ipa="$(sed -n '1p' "$ipa_list")"
+checksums="$(sed -n '1p' "$checksum_list")"
+manifest="$(sed -n '1p' "$manifest_list")"
+(cd "$(dirname "$checksums")" && shasum -a 256 -c "$(basename "$checksums")")
+python3 -m json.tool "$manifest" >/dev/null
+TARGET_JSON="$root/$target" scripts/verify_unsigned_ipa.sh "$ipa" "$destination/local-verification.json"
+digest="$(shasum -a 256 "$ipa" | awk '{print $1}')"
+printf 'Unsigned IPA: %s\nSHA-256: %s\nRequest ID: %s\nRun ID: %s\n' "$(cd "$(dirname "$ipa")" && pwd)/$(basename "$ipa")" "$digest" "$request_id" "$run_id"

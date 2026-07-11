@@ -1,0 +1,146 @@
+name: Probe iOS source
+
+run-name: Probe ${{ inputs.source_repository }}@${{ inputs.source_commit }} (${{ inputs.request_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repository:
+        description: Public GitHub repository in OWNER/REPOSITORY form
+        required: true
+        type: string
+      source_ref:
+        description: Requested tag, branch, or commit
+        required: true
+        type: string
+      source_commit:
+        description: Expected immutable 40-character commit SHA
+        required: true
+        type: string
+      runner:
+        description: GitHub-hosted macOS runner
+        required: true
+        default: macos-15-intel
+        type: choice
+        options:
+          - macos-15
+          - macos-15-intel
+      xcode_version:
+        description: Exact installed Xcode version (for example, 16.2)
+        required: true
+        default: "16.2"
+        type: string
+      request_id:
+        description: Canonical lowercase UUID used to correlate this run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: probe-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Inspect pinned source
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    env:
+      INPUT_SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+      INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      INPUT_XCODE_VERSION: ${{ inputs.xcode_version }}
+      INPUT_REQUEST_ID: ${{ inputs.request_id }}
+    steps:
+      - name: Check out immutable builder revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Validate dispatch inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$INPUT_SOURCE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          [[ "$INPUT_SOURCE_REF" != -* ]]
+          [[ "$INPUT_SOURCE_REF" != *$'\n'* ]]
+          [[ "$INPUT_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$INPUT_XCODE_VERSION" =~ ^[0-9]{1,2}\.[0-9]{1,2}([.][0-9]{1,2})?$ ]]
+          [[ "$INPUT_REQUEST_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+
+      - name: Prepare isolated directories and select Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          safe_home="$RUNNER_TEMP/safe-home"
+          source_dir="$RUNNER_TEMP/source"
+          output_dir="$RUNNER_TEMP/probe-output"
+          temp_dir="$RUNNER_TEMP/probe-tmp"
+          mkdir -p "$safe_home" "$source_dir" "$output_dir" "$temp_dir"
+
+          xcode_app="/Applications/Xcode_${INPUT_XCODE_VERSION}.app"
+          developer_dir="$xcode_app/Contents/Developer"
+          if [[ ! -d "$developer_dir" ]]; then
+            find /Applications -maxdepth 1 -type d -name 'Xcode_*.app' -print | sort
+            exit 1
+          fi
+          DEVELOPER_DIR="$developer_dir" xcodebuild -version
+          DEVELOPER_DIR="$developer_dir" xcrun --sdk iphoneos --show-sdk-version
+
+          {
+            printf 'SAFE_HOME=%s\n' "$safe_home"
+            printf 'SOURCE_DIR=%s\n' "$source_dir"
+            printf 'OUTPUT_DIR=%s\n' "$output_dir"
+            printf 'ISOLATED_TMPDIR=%s\n' "$temp_dir"
+            printf 'SELECTED_DEVELOPER_DIR=%s\n' "$developer_dir"
+          } >> "$GITHUB_ENV"
+
+      - name: Clone and verify exact public source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_REPOSITORY="$INPUT_SOURCE_REPOSITORY" \
+          SOURCE_REF="$INPUT_SOURCE_REF" \
+          EXPECTED_SHA="$INPUT_SOURCE_COMMIT" \
+          SOURCE_DIR="$SOURCE_DIR" \
+          SUBMODULE_STATUS_FILE="$OUTPUT_DIR/submodules.txt" \
+            "$GITHUB_WORKSPACE/scripts/clone_source.sh"
+
+      - name: Inspect source in scrubbed environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -i \
+            PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+            HOME="$SAFE_HOME" \
+            TMPDIR="$ISOLATED_TMPDIR" \
+            USER=runner \
+            LOGNAME=runner \
+            SHELL=/bin/bash \
+            LANG=en_US.UTF-8 \
+            LC_ALL=en_US.UTF-8 \
+            CI=1 \
+            DEVELOPER_DIR="$SELECTED_DEVELOPER_DIR" \
+            SOURCE_DIR="$SOURCE_DIR" \
+            OUTPUT_DIR="$OUTPUT_DIR" \
+            SOURCE_REPOSITORY="$INPUT_SOURCE_REPOSITORY" \
+            SOURCE_REF="$INPUT_SOURCE_REF" \
+            SOURCE_COMMIT="$INPUT_SOURCE_COMMIT" \
+            EXPECTED_SHA="$INPUT_SOURCE_COMMIT" \
+            REQUEST_ID="$INPUT_REQUEST_ID" \
+            RUNNER_LABEL="${{ inputs.runner }}" \
+            /bin/bash --noprofile --norc "$GITHUB_WORKSPACE/scripts/probe_source.sh"
+          test -f "$OUTPUT_DIR/probe-report.json"
+          python3 -m json.tool "$OUTPUT_DIR/probe-report.json" >/dev/null
+
+      - name: Upload probe report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: probe-${{ inputs.request_id }}
+          path: ${{ env.OUTPUT_DIR }}/probe-report.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 9
