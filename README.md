@@ -8,7 +8,7 @@ The pinned MPVKit submodule predates that fork's standalone license file. The bu
 
 The Nuvio adapter creates an empty, untracked `local.properties` compatibility stub. Nuvio's Gradle task declares that file optional and supplies empty runtime-service defaults, but Gradle 9.4 rejects the assigned missing input before the task runs. The adapter never adds credentials to the file and verifies that tracked upstream source remains unchanged.
 
-The committed Nuvio target uses a physical-device Debug archive so it can build on GitHub's free 14 GB Intel runner. Nuvio 0.2.20's Kotlin/Native 2.3.0 Release devirtualization exceeded even a 10.5 GB compiler heap; using Debug avoids that optimizer while preserving the exact official source commit, `full` distribution, device platform, and unsigned packaging checks. The adapter installs checked-in memory bounds into its isolated `GRADLE_USER_HOME`, taking precedence over Nuvio's project-level 12/8/16 GB settings.
+The committed Nuvio target uses Xcode 26.3 and a physical-device Debug archive so it can build on GitHub's free 14 GB Intel runner. Its pinned Compose binaries reference the iOS 26 `UIViewLayoutRegion` API, which cannot link with Xcode 16.4's iOS 18.5 SDK. Nuvio 0.2.20's Kotlin/Native 2.3.0 Release devirtualization also exceeded even a 10.5 GB compiler heap; Debug avoids that optimizer while preserving the exact official source commit, `full` distribution, device platform, and unsigned packaging checks. The adapter installs checked-in memory bounds into its isolated `GRADLE_USER_HOME`, taking precedence over Nuvio's project-level 12/8/16 GB settings.
 
 ## Commands
 
