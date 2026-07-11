@@ -249,7 +249,10 @@ jobs:
               if license_files:
                   basis = license_files[0]
                   license_sha256 = None
-              elif path == "MPVKit" and declared[path] == "https://github.com/NuvioMedia/MPVKit.git" and expected == "213e61e14ba3c0413a608e182618a51bd53cc4a9":
+              elif path == "MPVKit" and declared[path] == "https://github.com/NuvioMedia/MPVKit.git" and expected in {
+                  "213e61e14ba3c0413a608e182618a51bd53cc4a9",
+                  "d5cf091c80368bbbc1bbf2d195fbc55d926df888",
+              }:
                   basis = "repository-level LGPL-3.0 license pinned at ca111517f60e4631fd0b9a3fd0d03689e9f38b8a (not present in source commit)"
                   license_sha256 = "ea8af5e789cb2d4e9b10bce3874982ade163b749b6bfbdb32e2df21c4d106de1"
               else:
