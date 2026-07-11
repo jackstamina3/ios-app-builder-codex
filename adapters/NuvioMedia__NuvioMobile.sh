@@ -87,6 +87,6 @@ test -x "$java_home/bin/java" || { echo "Java 17 is unavailable" >&2; exit 1; }
 cat >"$ADAPTER_ENV_FILE" <<EOF
 JAVA_HOME=$java_home
 GRADLE_USER_HOME=$gradle_home
-GRADLE_OPTS=-Xmx256m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=256m
-KOTLIN_DAEMON_JVMARGS=-Xmx512m
+GRADLE_OPTS=-Xmx128m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=192m
+KOTLIN_DAEMON_JVMARGS=-Xmx256m
 EOF
