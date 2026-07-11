@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "NuvioMedia/NuvioMobile",
+    "ref": "0.2.22",
+    "commit": "e0c5e31c79d50bb83d67ef0e6bf9981755dc3f1c",
+    "license_spdx": "GPL-3.0-only",
+    "license_file": "LICENSE"
+  },
+  "runner": "macos-15-intel",
+  "xcode_version": "26.3",
+  "working_directory": ".",
+  "container": {
+    "type": "project",
+    "path": "iosApp/iosApp.xcodeproj"
+  },
+  "scheme": "iosApp",
+  "configuration": "Debug",
+  "build_action": "archive",
+  "bootstrap": {
+    "kind": "adapter",
+    "adapter": "adapters/NuvioMedia__NuvioMobile.sh"
+  },
+  "build_environment": {
+    "NUVIO_IOS_DISTRIBUTION": "full"
+  },
+  "extra_build_settings": {},
+  "output": {
+    "expected_app_bundle": "Nuvio.app"
+  }
+}

@@ -4,12 +4,13 @@ This public repository reproducibly builds unsigned iOS IPAs from authorized pub
 
 ## Required operating procedure
 
-1. Confirm an explicit source license or the user's authorization.
-2. Resolve every source ref to a full commit SHA and use a committed target under `targets/`.
-3. Run `python3 scripts/validate_target.py TARGET` before dispatch.
-4. Probe uncertain projects with `bin/probe-source OWNER/REPOSITORY REF`; never guess among schemes or containers.
-5. Build with `bin/build-target TARGET`. Inspect diagnostics and make only evidence-based manifest or adapter changes.
-6. Report source ref and SHA, license, runner, Xcode, embedded app version, bundle ID, absolute IPA path, SHA-256, and that the result is unsigned.
+1. At the beginning of every build request, ask the user which repository and source ref/tag to target. Also ask for any project variant when more than one exists. Never infer a target from an existing manifest, reuse the previous target, or interpret “latest” without confirming the resolved release with the user.
+2. Confirm an explicit source license or the user's authorization.
+3. Resolve the user-selected source ref to a full commit SHA and generate or update a committed target under `targets/`. Committed targets are immutable build records, not defaults.
+4. Run `python3 scripts/validate_target.py TARGET` before dispatch.
+5. Probe uncertain projects with `bin/probe-source OWNER/REPOSITORY REF`; never guess among schemes or containers.
+6. Build with `bin/build-target TARGET`. Inspect diagnostics and make only evidence-based manifest or adapter changes.
+7. Report source ref and SHA, license, runner, Xcode, embedded app version, bundle ID, absolute IPA path, SHA-256, and that the result is unsigned.
 
 ## Security invariants
 
