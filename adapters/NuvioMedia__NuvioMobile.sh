@@ -29,10 +29,18 @@ test ! -e "$SOURCE_DIR/local.properties" || {
   exit 1
 }
 touch "$SOURCE_DIR/local.properties"
-[[ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)" ]] || {
-  echo "Tracked source changed during Nuvio bootstrap" >&2
-  exit 1
-}
+if [[ "$(jq -r '.source_patch == null' "$TARGET_JSON")" == true ]]; then
+  [[ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)" ]] || {
+    echo "Tracked source changed during Nuvio bootstrap" >&2
+    exit 1
+  }
+else
+  git -C "$SOURCE_DIR" diff --check
+  [[ -n "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)" ]] || {
+    echo "Declared Nuvio source patch is not applied" >&2
+    exit 1
+  }
+fi
 
 mpvkit_license_url='https://raw.githubusercontent.com/NuvioMedia/MPVKit/ca111517f60e4631fd0b9a3fd0d03689e9f38b8a/LICENSE'
 mpvkit_license_sha='ea8af5e789cb2d4e9b10bce3874982ade163b749b6bfbdb32e2df21c4d106de1'

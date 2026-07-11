@@ -7,6 +7,7 @@
     "license_spdx": "GPL-3.0-only",
     "license_file": "LICENSE"
   },
+  "source_patch": null,
   "runner": "macos-15-intel",
   "xcode_version": "26.3",
   "working_directory": ".",

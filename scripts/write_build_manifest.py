@@ -89,6 +89,7 @@ def main():
             "commit": commit,
             "license_spdx": source.get("license_spdx"),
             "license_file": source.get("license_file"),
+            "patch": target.get("source_patch"),
         },
         "build": {
             "runner": target.get("runner"),

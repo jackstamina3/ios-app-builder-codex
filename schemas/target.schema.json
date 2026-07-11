@@ -7,6 +7,7 @@
   "required": [
     "schema_version",
     "source",
+    "source_patch",
     "runner",
     "xcode_version",
     "working_directory",
@@ -40,6 +41,25 @@
         },
         "license_file": { "$ref": "#/$defs/sourcePath" }
       }
+    },
+    "source_patch": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "reason"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^patches/[A-Za-z0-9_.-]+\\.patch$",
+              "maxLength": 240
+            },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+          }
+        }
+      ]
     },
     "runner": { "enum": ["macos-15", "macos-15-intel"] },
     "xcode_version": {

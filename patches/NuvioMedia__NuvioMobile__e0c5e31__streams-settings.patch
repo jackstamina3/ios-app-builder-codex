@@ -1,0 +1,22 @@
+diff --git a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/StreamsSettingsPage.kt b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/StreamsSettingsPage.kt
+index 360d492..0eb2e3f 100644
+--- a/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/StreamsSettingsPage.kt
++++ b/composeApp/src/commonMain/kotlin/com/nuvio/app/features/settings/StreamsSettingsPage.kt
+@@ -128,8 +128,6 @@ internal fun LazyListScope.streamsSettingsContent(isTablet: Boolean) {
+                 )
+             }
+         }
+-    } 
+-    item {
+         SettingsSection(
+             title = stringResource(Res.string.settings_stream_display_section),
+             isTablet = isTablet,
+@@ -143,8 +141,6 @@ internal fun LazyListScope.streamsSettingsContent(isTablet: Boolean) {
+                 )
+             }
+         }
+-    } 
+-    
+         if (showBadgeImportDialog) {
+             BadgeUrlManagerDialog(
+                 currentRules = currentRules,

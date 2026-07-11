@@ -7,6 +7,11 @@
     "license_spdx": "GPL-3.0-only",
     "license_file": "LICENSE"
   },
+  "source_patch": {
+    "path": "patches/NuvioMedia__NuvioMobile__e0c5e31__streams-settings.patch",
+    "sha256": "7e97f39de0128ed61291d39106e6c1c4a0168bff68e802ad8d3b706548798ecb",
+    "reason": "Upstream tag 0.2.22 introduced two misplaced LazyListScope braces; revert only that malformed split to the prior compiling structure."
+  },
   "runner": "macos-15-intel",
   "xcode_version": "26.3",
   "working_directory": ".",

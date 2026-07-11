@@ -6,6 +6,28 @@ set -euo pipefail
 : "${BUILDER_DIR:?BUILDER_DIR is required}"
 : "${ADAPTER_ENV_FILE:?ADAPTER_ENV_FILE is required}"
 
+source_patch="$(jq -r '.source_patch.path // empty' "$TARGET_JSON")"
+if [[ -n "$source_patch" ]]; then
+  patch_file="$BUILDER_DIR/$source_patch"
+  expected_patch_sha="$(jq -r '.source_patch.sha256' "$TARGET_JSON")"
+  [[ -f "$patch_file" && ! -L "$patch_file" ]] || { echo "Source patch is unavailable" >&2; exit 1; }
+  [[ "$(shasum -a 256 "$patch_file" | awk '{print $1}')" == "$expected_patch_sha" ]] || {
+    echo "Source patch checksum mismatch" >&2
+    exit 1
+  }
+  [[ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)" ]] || {
+    echo "Source was modified before patch application" >&2
+    exit 1
+  }
+  git -C "$SOURCE_DIR" apply --check "$patch_file"
+  git -C "$SOURCE_DIR" apply "$patch_file"
+  git -C "$SOURCE_DIR" diff --check
+  [[ -n "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)" ]] || {
+    echo "Source patch made no tracked change" >&2
+    exit 1
+  }
+fi
+
 kind="$(jq -r '.bootstrap.kind' "$TARGET_JSON")"
 working="$(jq -r '.working_directory' "$TARGET_JSON")"
 workdir="$(python3 - "$SOURCE_DIR" "$working" <<'PY'

@@ -9,6 +9,7 @@ perform safely, such as repository-relative path and adapter checks.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import stat
@@ -27,6 +28,8 @@ XCODE_RE = re.compile(r"^[0-9]{1,2}\.[0-9]{1,2}(?:\.[0-9]{1,2})?$")
 SETTING_RE = re.compile(r"^[A-Z0-9_]+$")
 ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 ADAPTER_RE = re.compile(r"^adapters/[A-Za-z0-9_.-]+$")
+PATCH_RE = re.compile(r"^patches/[A-Za-z0-9_.-]+\.patch$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 APP_RE = re.compile(r"^[^/\\]+\.app$")
 
 RUNNERS = {"macos-15", "macos-15-intel"}
@@ -36,12 +39,13 @@ BUILD_ACTIONS = {"archive", "build"}
 BOOTSTRAP_KINDS = {"none", "swiftpm", "cocoapods", "carthage", "adapter"}
 
 ROOT_KEYS = {
-    "schema_version", "source", "runner", "xcode_version",
+    "schema_version", "source", "source_patch", "runner", "xcode_version",
     "working_directory", "container", "scheme", "configuration",
     "build_action", "bootstrap", "build_environment",
     "extra_build_settings", "output",
 }
 SOURCE_KEYS = {"repository", "ref", "commit", "license_spdx", "license_file"}
+PATCH_KEYS = {"path", "sha256", "reason"}
 CONTAINER_KEYS = {"type", "path"}
 BOOTSTRAP_KEYS = {"kind", "adapter"}
 OUTPUT_KEYS = {"expected_app_bundle"}
@@ -200,6 +204,31 @@ def validate_manifest(
     if not SPDX_RE.fullmatch(spdx):
         _fail("source.license_spdx", "must be a conservative SPDX identifier")
     _relative_path(source["license_file"], "source.license_file")
+
+    source_patch = root["source_patch"]
+    if source_patch is not None:
+        patch = _object(source_patch, "source_patch", PATCH_KEYS)
+        patch_path = _relative_path(patch["path"], "source_patch.path")
+        if not PATCH_RE.fullmatch(patch_path):
+            _fail("source_patch.path", "must be a direct .patch file under patches/")
+        patch_sha = _string(patch["sha256"], "source_patch.sha256", maximum=64)
+        if not SHA256_RE.fullmatch(patch_sha):
+            _fail("source_patch.sha256", "must be 64 lowercase hexadecimal characters")
+        _string(patch["reason"], "source_patch.reason", maximum=500)
+        if builder_root is not None:
+            patch_file = builder_root / patch_path
+            try:
+                if patch_file.is_symlink() or not patch_file.resolve(strict=True).is_file():
+                    _fail("source_patch.path", "must resolve to a committed regular file")
+            except FileNotFoundError:
+                _fail("source_patch.path", "does not exist")
+            if patch_file.resolve().parent != (builder_root / "patches").resolve():
+                _fail("source_patch.path", "must resolve directly under patches/")
+            if _git_has_head(builder_root) and not _git_tracks(builder_root, patch_path):
+                _fail("source_patch.path", "must be committed to the builder repository")
+            actual_patch_sha = hashlib.sha256(patch_file.read_bytes()).hexdigest()
+            if actual_patch_sha != patch_sha:
+                _fail("source_patch.sha256", "does not match the committed patch file")
 
     runner = _string(root["runner"], "runner")
     if runner not in RUNNERS:

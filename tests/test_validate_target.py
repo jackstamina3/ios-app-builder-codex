@@ -71,6 +71,27 @@ class TargetValidationTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assert_invalid(lambda d, v=path: d["source"].update(license_file=v))
 
+    def test_rejects_unsafe_source_patch_contract(self) -> None:
+        valid_patch = {
+            "path": "patches/fix.patch",
+            "sha256": "a" * 64,
+            "reason": "Approved upstream compile fix.",
+        }
+        for path in ("../fix.patch", "patches/nested/fix.patch", "/tmp/fix.patch", "patches/fix.txt"):
+            with self.subTest(path=path):
+                self.assert_invalid(
+                    lambda d, value=path: d.update(source_patch={**valid_patch, "path": value}),
+                    "source_patch.path",
+                )
+        self.assert_invalid(
+            lambda d: d.update(source_patch={**valid_patch, "sha256": "A" * 64}),
+            "lowercase hexadecimal",
+        )
+        self.assert_invalid(
+            lambda d: d.update(source_patch={**valid_patch, "unexpected": True}),
+            "unknown key",
+        )
+
     def test_requires_container_suffix_matching_type(self) -> None:
         self.assert_invalid(
             lambda d: d["container"].update(type="workspace", path="iosApp/iosApp.xcodeproj"),
