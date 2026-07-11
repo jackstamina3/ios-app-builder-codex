@@ -4,6 +4,7 @@ set -euo pipefail
 : "${SOURCE_DIR:?SOURCE_DIR is required}"
 : "${ADAPTER_ENV_FILE:?ADAPTER_ENV_FILE is required}"
 : "${SAFE_HOME:?SAFE_HOME is required}"
+: "${BUILDER_DIR:?BUILDER_DIR is required}"
 
 required=(
   gradlew
@@ -67,6 +68,7 @@ gradle_home="$SAFE_HOME/.gradle"
 distribution_dir="$gradle_home/wrapper/dists/gradle-9.4.1-bin/$gradle_hash"
 distribution_zip="$distribution_dir/gradle-9.4.1-bin.zip"
 mkdir -p "$distribution_dir"
+cp "$BUILDER_DIR/adapters/NuvioMedia__NuvioMobile.gradle.properties" "$gradle_home/gradle.properties"
 if [[ ! -f "$distribution_zip" ]] || [[ "$(shasum -a 256 "$distribution_zip" | awk '{print $1}')" != "$gradle_sha" ]]; then
   temporary="$distribution_zip.download"
   rm -f "$temporary"
@@ -85,9 +87,6 @@ test -x "$java_home/bin/java" || { echo "Java 17 is unavailable" >&2; exit 1; }
 cat >"$ADAPTER_ENV_FILE" <<EOF
 JAVA_HOME=$java_home
 GRADLE_USER_HOME=$gradle_home
-GRADLE_OPTS=-Xmx512m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=384m -Dorg.gradle.jvmargs=-Xmx1536m -Dkotlin.daemon.jvmargs=-Xmx1024m -Dkotlin.native.jvmArgs=-Xmx10240m
+GRADLE_OPTS=-Xmx512m -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=384m
 KOTLIN_DAEMON_JVMARGS=-Xmx1024m
-ORG_GRADLE_PROJECT_org.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=640m
-ORG_GRADLE_PROJECT_kotlin.daemon.jvmargs=-Xmx1024m
-ORG_GRADLE_PROJECT_kotlin.native.jvmArgs=-Xmx10240m
 EOF
