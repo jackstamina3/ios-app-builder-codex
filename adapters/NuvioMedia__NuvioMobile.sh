@@ -18,6 +18,21 @@ for path in "${required[@]}"; do
   test -e "$SOURCE_DIR/$path" || { echo "Nuvio prerequisite missing: $path" >&2; exit 1; }
 done
 test -x "$SOURCE_DIR/gradlew" || { echo "gradlew is not executable" >&2; exit 1; }
+
+# Nuvio's GenerateRuntimeConfigsTask marks local.properties optional, but Gradle
+# 9.4 validates its assigned RegularFileProperty before the task can apply its
+# built-in empty defaults. Supply the conventional untracked local config stub;
+# never populate it with credentials and prove that tracked source stays clean.
+test ! -e "$SOURCE_DIR/local.properties" || {
+  echo "Unexpected upstream local.properties file" >&2
+  exit 1
+}
+touch "$SOURCE_DIR/local.properties"
+[[ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)" ]] || {
+  echo "Tracked source changed during Nuvio bootstrap" >&2
+  exit 1
+}
+
 mpvkit_license_url='https://raw.githubusercontent.com/NuvioMedia/MPVKit/ca111517f60e4631fd0b9a3fd0d03689e9f38b8a/LICENSE'
 mpvkit_license_sha='ea8af5e789cb2d4e9b10bce3874982ade163b749b6bfbdb32e2df21c4d106de1'
 license_basis_dir="$SAFE_HOME/license-basis"

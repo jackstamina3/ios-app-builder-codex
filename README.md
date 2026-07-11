@@ -6,6 +6,8 @@ The initial target is official NuvioMobile release `0.2.20` at commit `70004b7b8
 
 The pinned MPVKit submodule predates that fork's standalone license file. The builder records this explicitly and checksum-pins the repository-level LGPL-3.0 license from MPVKit commit `ca111517f60e4631fd0b9a3fd0d03689e9f38b8a`; it never presents that later license file as if it existed in the older source tree.
 
+The Nuvio adapter creates an empty, untracked `local.properties` compatibility stub. Nuvio's Gradle task declares that file optional and supplies empty runtime-service defaults, but Gradle 9.4 rejects the assigned missing input before the task runs. The adapter never adds credentials to the file and verifies that tracked upstream source remains unchanged.
+
 ## Commands
 
 ```bash
