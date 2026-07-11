@@ -248,13 +248,20 @@ jobs:
               license_files = sorted(str(p.relative_to(child)) for p in child.glob("LICENSE*") if p.is_file())
               if license_files:
                   basis = license_files[0]
+                  license_sha256 = None
+              elif path == "MPVKit" and declared[path] == "https://github.com/NuvioMedia/MPVKit.git" and expected == "213e61e14ba3c0413a608e182618a51bd53cc4a9":
+                  basis = "repository-level LGPL-3.0 license pinned at ca111517f60e4631fd0b9a3fd0d03689e9f38b8a (not present in source commit)"
+                  license_sha256 = "ea8af5e789cb2d4e9b10bce3874982ade163b749b6bfbdb32e2df21c4d106de1"
               else:
                   readme = child / "README.md"
                   text = readme.read_text(encoding="utf-8", errors="replace") if readme.is_file() else ""
                   if not any(marker in text.lower() for marker in ("gpl", "general public license", "mit license", "apache license", "bsd license", "mozilla public license")):
                       raise SystemExit(f"submodule has no explicit license basis: {path}")
                   basis = "README.md"
+                  license_sha256 = None
               record.update({"status": "initialized", "url": declared[path], "license_basis": basis})
+              if license_sha256:
+                  record["license_sha256"] = license_sha256
               records.append(record)
           rendered = json.dumps(records, indent=2, sort_keys=True) + "\n"
           pathlib.Path(sys.argv[2]).write_text(rendered, encoding="utf-8")
@@ -467,9 +474,9 @@ jobs:
           submodule_url="$(git -C "$metadata_source" config -f .gitmodules --get submodule.MPVKit.url)"
           [[ "$submodule_url" == 'https://github.com/NuvioMedia/MPVKit.git' ]]
           git -C "$metadata_source" -c protocol.allow=never -c protocol.https.allow=always submodule update --init --depth=1 -- MPVKit
-          test -f "$metadata_source/MPVKit/README.md"
-          grep -Eqi 'GPL|General Public License' "$metadata_source/MPVKit/README.md"
-          cp "$metadata_source/MPVKit/README.md" "$VERIFIED_DIR/license/MPVKit-README-license-basis.md"
+          mpvkit_license_url='https://raw.githubusercontent.com/NuvioMedia/MPVKit/ca111517f60e4631fd0b9a3fd0d03689e9f38b8a/LICENSE'
+          curl --fail --location --proto '=https' --tlsv1.2 "$mpvkit_license_url" --output "$VERIFIED_DIR/license/MPVKit-LICENSE"
+          [[ "$(shasum -a 256 "$VERIFIED_DIR/license/MPVKit-LICENSE" | awk '{print $1}')" == 'ea8af5e789cb2d4e9b10bce3874982ade163b749b6bfbdb32e2df21c4d106de1' ]]
 
       - name: Upload final verified unsigned IPA
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

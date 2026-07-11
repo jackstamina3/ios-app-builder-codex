@@ -18,9 +18,13 @@ for path in "${required[@]}"; do
   test -e "$SOURCE_DIR/$path" || { echo "Nuvio prerequisite missing: $path" >&2; exit 1; }
 done
 test -x "$SOURCE_DIR/gradlew" || { echo "gradlew is not executable" >&2; exit 1; }
-test -f "$SOURCE_DIR/MPVKit/README.md" || { echo "MPVKit README is missing" >&2; exit 1; }
-grep -Eqi 'GPL|General Public License' "$SOURCE_DIR/MPVKit/README.md" || {
-  echo "MPVKit has no explicit GPL license statement" >&2
+mpvkit_license_url='https://raw.githubusercontent.com/NuvioMedia/MPVKit/ca111517f60e4631fd0b9a3fd0d03689e9f38b8a/LICENSE'
+mpvkit_license_sha='ea8af5e789cb2d4e9b10bce3874982ade163b749b6bfbdb32e2df21c4d106de1'
+license_basis_dir="$SAFE_HOME/license-basis"
+mkdir -p "$license_basis_dir"
+curl --fail --location --proto '=https' --tlsv1.2 "$mpvkit_license_url" --output "$license_basis_dir/MPVKit-LICENSE"
+[[ "$(shasum -a 256 "$license_basis_dir/MPVKit-LICENSE" | awk '{print $1}')" == "$mpvkit_license_sha" ]] || {
+  echo "MPVKit repository-level license checksum mismatch" >&2
   exit 1
 }
 grep -Eq '^distributionUrl=https\\://services\.gradle\.org/distributions/gradle-[0-9.]+-(bin|all)\.zip$' "$SOURCE_DIR/gradle/wrapper/gradle-wrapper.properties" || {

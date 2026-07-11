@@ -4,6 +4,8 @@ This private builder creates reproducible **unsigned** iOS IPAs from explicitly 
 
 The initial target is official NuvioMobile release `0.2.20` at commit `70004b7b825a8b9fa672a40ec92062884ddf4901`, built as the upstream `full` iOS distribution with Xcode 16.2 on `macos-15-intel`. The source embeds app version `1.1.20` build `92`, so both versions are reported.
 
+The pinned MPVKit submodule predates that fork's standalone license file. The builder records this explicitly and checksum-pins the repository-level LGPL-3.0 license from MPVKit commit `ca111517f60e4631fd0b9a3fd0d03689e9f38b8a`; it never presents that later license file as if it existed in the older source tree.
+
 ## Commands
 
 ```bash
@@ -21,4 +23,3 @@ Public source builds may execute arbitrary upstream Gradle, Xcode, dependency, o
 ## Output
 
 The Nuvio artifact is named `Nuvio-1.1.20-92-70004b7.unsigned.ipa`. It is not signed and cannot be installed until a separate authorized signing process supplies a valid identity and provisioning profile.
-
