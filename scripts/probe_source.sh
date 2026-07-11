@@ -9,7 +9,7 @@ set -euo pipefail
 
 mkdir -p "$OUTPUT_DIR"
 projects="$(find "$SOURCE_DIR" -type d \( -name '*.xcodeproj' -o -name '*.xcworkspace' \) -not -path '*/Pods/*' -not -path '*/Carthage/*' -not -path '*/.build/*' -not -path '*.xcodeproj/project.xcworkspace' | sed "s#^$SOURCE_DIR/##" | sort -u | jq -Rsc 'split("\n")[:-1]')"
-detected="$(for f in LICENSE LICENSE.md COPYING Podfile Podfile.lock Cartfile Package.swift Package.resolved project.yml Project.swift Gemfile package.json gradlew settings.gradle.kts pubspec.yaml iosApp/Configuration/Version.xcconfig .xcode-version mise.toml; do [[ -e "$SOURCE_DIR/$f" ]] && echo "$f"; done | jq -Rsc 'split("\n")[:-1]')"
+detected="$(for f in LICENSE LICENSE.md COPYING Podfile Podfile.lock Cartfile Package.swift Package.resolved project.yml Project.swift Gemfile package.json gradlew settings.gradle.kts pubspec.yaml iosApp/Configuration/Version.xcconfig .xcode-version mise.toml; do if [[ -e "$SOURCE_DIR/$f" ]]; then echo "$f"; fi; done | jq -Rsc 'split("\n")[:-1]')"
 schemes='[]'
 errors='[]'
 while IFS= read -r container; do
