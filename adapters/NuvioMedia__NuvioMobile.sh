@@ -89,8 +89,23 @@ if [[ ! -f "$distribution_zip" ]] || [[ "$(shasum -a 256 "$distribution_zip" | a
   mv "$temporary" "$distribution_zip"
 fi
 
-java_home="$(/usr/libexec/java_home -v 17)"
-test -x "$java_home/bin/java" || { echo "Java 17 is unavailable" >&2; exit 1; }
+java_home=""
+java_candidates=()
+system_java_home="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
+[[ -n "$system_java_home" ]] && java_candidates+=("$system_java_home")
+java_candidates+=(
+  /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+  /usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+)
+for candidate in "${java_candidates[@]}"; do
+  [[ -x "$candidate/bin/java" ]] || continue
+  java_version="$("$candidate/bin/java" -XshowSettings:properties -version 2>&1 | awk -F'= ' '/^[[:space:]]*java\.version = / {print $2; exit}')"
+  if [[ "$java_version" == 17.* || "$java_version" == 17 ]]; then
+    java_home=$candidate
+    break
+  fi
+done
+[[ -n "$java_home" ]] || { echo "Java 17 is unavailable" >&2; exit 1; }
 
 cat >"$ADAPTER_ENV_FILE" <<EOF
 JAVA_HOME=$java_home

@@ -32,7 +32,7 @@ PATCH_RE = re.compile(r"^patches/[A-Za-z0-9_.-]+\.patch$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 APP_RE = re.compile(r"^[^/\\]+\.app$")
 
-RUNNERS = {"macos-15", "macos-15-intel"}
+RUNNERS = {"macos-15", "macos-15-intel", "macos-26", "macos-26-intel"}
 CONTAINER_TYPES = {"project", "workspace"}
 CONFIGURATIONS = {"Release", "Debug"}
 BUILD_ACTIONS = {"archive", "build"}
@@ -285,9 +285,14 @@ def validate_manifest(
         _fail("output.expected_app_bundle", "must be a single .app bundle name")
 
     if manifest_path is not None:
-        expected_name = f"{owner}__{repo}__{commit[:7].lower()}.json"
-        if manifest_path.name != expected_name or manifest_path.parent.name != "targets":
-            _fail("target", f"must be named targets/{expected_name}")
+        base_name = f"{owner}__{repo}__{commit[:7].lower()}"
+        expected_names = {
+            f"{base_name}.json",
+            f"{base_name}__xcode{xcode}.json",
+        }
+        if manifest_path.name not in expected_names or manifest_path.parent.name != "targets":
+            rendered = " or ".join(f"targets/{name}" for name in sorted(expected_names))
+            _fail("target", f"must be named {rendered}")
 
     if kind == "adapter" and check_adapter:
         if builder_root is None:

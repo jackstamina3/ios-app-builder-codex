@@ -25,6 +25,8 @@ on:
         options:
           - macos-15
           - macos-15-intel
+          - macos-26
+          - macos-26-intel
       xcode_version:
         description: Exact installed Xcode version (for example, 16.2)
         required: true

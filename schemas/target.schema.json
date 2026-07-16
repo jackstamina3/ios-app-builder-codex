@@ -61,7 +61,7 @@
         }
       ]
     },
-    "runner": { "enum": ["macos-15", "macos-15-intel"] },
+    "runner": { "enum": ["macos-15", "macos-15-intel", "macos-26", "macos-26-intel"] },
     "xcode_version": {
       "type": "string",
       "pattern": "^[0-9]{1,2}\\.[0-9]{1,2}(\\.[0-9]{1,2})?$"

@@ -102,6 +102,14 @@ class TargetValidationTests(unittest.TestCase):
         self.assert_invalid(lambda d: d.update(runner="self-hosted"), "must be one of")
         self.assert_invalid(lambda d: d.update(xcode_version="latest"), "must look like")
 
+    def test_accepts_standard_macos_26_runners(self) -> None:
+        for runner in ("macos-26", "macos-26-intel"):
+            with self.subTest(runner=runner):
+                data = valid_manifest()
+                data["runner"] = runner
+                result = validate_target.validate_manifest(data, check_adapter=False)
+                self.assertEqual(result["runner"], runner)
+
     def test_adapter_is_required_only_for_adapter_mode(self) -> None:
         self.assert_invalid(lambda d: d["bootstrap"].update(adapter=None), "must be a string")
         self.assert_invalid(
@@ -161,6 +169,8 @@ class TargetValidationTests(unittest.TestCase):
         data = valid_manifest()
         good = ROOT / "targets" / "NuvioMedia__NuvioMobile__70004b7.json"
         validate_target.validate_manifest(data, manifest_path=good, check_adapter=False)
+        versioned = ROOT / "targets" / "NuvioMedia__NuvioMobile__70004b7__xcode26.3.json"
+        validate_target.validate_manifest(data, manifest_path=versioned, check_adapter=False)
         with self.assertRaisesRegex(validate_target.ValidationError, "must be named"):
             validate_target.validate_manifest(
                 data,
