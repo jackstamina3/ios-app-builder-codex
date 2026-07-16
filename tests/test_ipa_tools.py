@@ -207,8 +207,34 @@ class IpaToolsTests(unittest.TestCase):
         self.assertEqual(manifest["artifact"]["sha256"], digest)
         self.assertEqual(manifest["source"]["url"], "https://github.com/NuvioMedia/NuvioMobile")
         self.assertEqual(manifest["build"]["distribution"], "full")
+        self.assertEqual(manifest["build"]["mode"], "github_actions")
         self.assertEqual(manifest["build"]["request_id"], "00000000-0000-4000-8000-000000000000")
         self.assertEqual(manifest["build"]["github_run_id"], "123")
+
+    def test_build_manifest_records_local_xcode_mode(self):
+        ipa = self.work / "Nuvio.unsigned.ipa"
+        ipa.write_bytes(b"ipa")
+        digest = hashlib.sha256(b"ipa").hexdigest()
+        target = self.work / "target.json"
+        target.write_text(json.dumps({
+            "source": {"repository": "NuvioMedia/NuvioMobile", "ref": "0.2.22", "commit": "e" * 40},
+            "runner": "macos-15-intel", "xcode_version": "26.3", "configuration": "Debug",
+            "build_environment": {"NUVIO_IOS_DISTRIBUTION": "full"},
+        }))
+        verification = self.work / "verification.json"
+        verification.write_text(json.dumps({"sha256": digest}))
+        signing = self.work / "signing.json"
+        signing.write_text(json.dumps({"format_version": 1, "bundles": []}))
+        output = self.work / "manifest.json"
+        subprocess.run([
+            sys.executable, MANIFEST, "--target", target, "--ipa", ipa,
+            "--verification", verification, "--signing-metadata", signing,
+            "--request-id", "00000000-0000-4000-8000-000000000000",
+            "--build-mode", "local_xcode", "--output", output,
+        ], check=True)
+        manifest = json.loads(output.read_text())
+        self.assertEqual(manifest["build"]["mode"], "local_xcode")
+        self.assertIsNone(manifest["build"]["github_run_id"])
 
     def test_build_manifest_rejects_sha_mismatch(self):
         ipa = self.work / "Nuvio.unsigned.ipa"

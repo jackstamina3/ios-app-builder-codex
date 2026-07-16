@@ -9,8 +9,9 @@ This public repository reproducibly builds unsigned iOS IPAs from authorized pub
 3. Resolve the user-selected source ref to a full commit SHA and generate or update a committed target under `targets/`. Committed targets are immutable build records, not defaults.
 4. Run `python3 scripts/validate_target.py TARGET` before dispatch.
 5. Probe uncertain projects with `bin/probe-source OWNER/REPOSITORY REF`; never guess among schemes or containers.
-6. Build with `bin/build-target TARGET`. Inspect diagnostics and make only evidence-based manifest or adapter changes.
-7. Report source ref and SHA, license, runner, Xcode, embedded app version, bundle ID, absolute IPA path, SHA-256, and that the result is unsigned.
+6. Ask whether the user wants the free ephemeral GitHub route (`bin/build-target TARGET`) or the local-Xcode route (`bin/build-local TARGET`). Never choose local execution implicitly. Inspect diagnostics and make only evidence-based manifest or adapter changes.
+7. For local builds, confirm the exact target Xcode version is installed and warn that authorized upstream build code executes on the user's Mac without fresh-runner isolation.
+8. Report source ref and SHA, license, build mode, runner when applicable, Xcode, embedded app version, bundle ID, absolute IPA path, SHA-256, and that the result is unsigned.
 
 ## Security invariants
 

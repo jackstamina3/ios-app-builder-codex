@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: bin/build-local TARGET [--xcode /Applications/Xcode_VERSION.app]" >&2
+  exit 64
+}
+
+[[ $# -ge 1 && $# -le 3 ]] || usage
+target=$1
+xcode_app=""
+if [[ $# == 3 ]]; then
+  [[ $2 == --xcode ]] || usage
+  xcode_app=$3
+elif [[ $# != 1 ]]; then
+  usage
+fi
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+[[ -z "$(git status --porcelain)" ]] || { echo "Working tree must be clean" >&2; exit 1; }
+python3 scripts/validate_target.py "$target" >/dev/null
+[[ "$(uname -s)" == Darwin ]] || { echo "Local Xcode builds require macOS" >&2; exit 69; }
+
+target_abs="$root/$target"
+requested_xcode="$(jq -r '.xcode_version' "$target_abs")"
+if [[ -z "$xcode_app" ]]; then
+  if [[ -n "${DEVELOPER_DIR:-}" ]]; then
+    developer_dir=$DEVELOPER_DIR
+  elif [[ -d "/Applications/Xcode_${requested_xcode}.app/Contents/Developer" ]]; then
+    developer_dir="/Applications/Xcode_${requested_xcode}.app/Contents/Developer"
+  elif [[ -d /Applications/Xcode.app/Contents/Developer ]]; then
+    developer_dir=/Applications/Xcode.app/Contents/Developer
+  else
+    echo "Xcode $requested_xcode is not installed or selected. Install Xcode, then pass --xcode /Applications/Xcode.app." >&2
+    exit 69
+  fi
+else
+  [[ "$xcode_app" == /* && "$xcode_app" == *.app ]] || { echo "--xcode must be an absolute .app path" >&2; exit 64; }
+  developer_dir="$xcode_app/Contents/Developer"
+fi
+[[ -d "$developer_dir" ]] || { echo "Invalid Xcode developer directory: $developer_dir" >&2; exit 69; }
+
+actual_xcode="$(DEVELOPER_DIR="$developer_dir" xcodebuild -version | awk 'NR==1 {print $2}')"
+[[ "$actual_xcode" == "$requested_xcode" ]] || {
+  echo "Target requires Xcode $requested_xcode, but selected Xcode is $actual_xcode" >&2
+  exit 69
+}
+DEVELOPER_DIR="$developer_dir" xcrun --sdk iphoneos --show-sdk-version >/dev/null
+
+request_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+destination="$root/dist/$request_id"
+work="$(mktemp -d "${TMPDIR:-/tmp}/ios-builder-local.XXXXXX")"
+source_dir="$work/source"
+build_dir="$work/build"
+safe_home="$work/safe-home"
+temp_dir="$work/tmp"
+diagnostics="$destination/diagnostics"
+mkdir -p "$destination" "$diagnostics" "$build_dir" "$safe_home" "$temp_dir"
+cleanup() { rm -rf "$work"; }
+trap cleanup EXIT
+
+echo "WARNING: authorized upstream build scripts will execute on this Mac. Environment scrubbing is not a sandbox." >&2
+source_repository="$(jq -r '.source.repository' "$target_abs")"
+source_ref="$(jq -r '.source.ref' "$target_abs")"
+source_commit="$(jq -r '.source.commit' "$target_abs")"
+license_file="$(jq -r '.source.license_file' "$target_abs")"
+
+SOURCE_REPOSITORY="$source_repository" SOURCE_REF="$source_ref" EXPECTED_SHA="$source_commit" \
+  SOURCE_DIR="$source_dir" SUBMODULE_STATUS_FILE="$destination/submodules.txt" \
+  scripts/clone_source.sh
+python3 - "$source_dir" "$license_file" <<'PY'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1]).resolve()
+candidate = (root / sys.argv[2]).resolve(strict=True)
+candidate.relative_to(root)
+if not candidate.is_file():
+    raise SystemExit("source license is not a regular file")
+PY
+python3 scripts/record_submodules.py "$source_dir" "$destination/submodules.json"
+git -C "$source_dir" remote remove origin
+
+PATH_VALUE="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+env -i \
+  PATH="$PATH_VALUE" HOME="$safe_home" SAFE_HOME="$safe_home" TMPDIR="$temp_dir" \
+  USER="$(id -un)" LOGNAME="$(id -un)" SHELL=/bin/bash LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 CI=1 \
+  DEVELOPER_DIR="$developer_dir" BUILDER_DIR="$root" SOURCE_DIR="$source_dir" BUILD_DIR="$build_dir" \
+  OUTPUT_DIR="$destination" DIAGNOSTICS_DIR="$diagnostics" TARGET_JSON="$target_abs" REQUEST_ID="$request_id" \
+  /bin/bash --noprofile --norc "$root/scripts/build_unsigned_app.sh"
+
+app_bundle="$(sed -n '1p' "$build_dir/app-path.txt")"
+expected_app="$(jq -r '.output.expected_app_bundle' "$target_abs")"
+[[ "$app_bundle" == "$build_dir"/* && "$(basename "$app_bundle")" == "$expected_app" && -d "$app_bundle" ]]
+scripts/remove_signatures.sh "$app_bundle" "$destination/pre-strip-signing-metadata.json"
+
+version="$(plutil -extract CFBundleShortVersionString raw -o - "$app_bundle/Info.plist")"
+build_number="$(plutil -extract CFBundleVersion raw -o - "$app_bundle/Info.plist")"
+[[ "$version" =~ ^[0-9A-Za-z._-]+$ && "$build_number" =~ ^[0-9A-Za-z._-]+$ ]]
+ipa="$destination/${expected_app%.app}-${version}-${build_number}-${source_commit:0:7}.unsigned.ipa"
+scripts/package_ipa.sh "$app_bundle" "$ipa" >/dev/null
+scripts/verify_unsigned_ipa.sh "$ipa" "$destination/build-verification.json"
+scripts/verify_unsigned_ipa.sh "$ipa" "$destination/local-verification.json"
+python3 scripts/write_build_manifest.py \
+  --target "$target_abs" --ipa "$ipa" --verification "$destination/local-verification.json" \
+  --signing-metadata "$destination/pre-strip-signing-metadata.json" --submodules "$destination/submodules.json" \
+  --request-id "$request_id" --build-mode local_xcode --output "$destination/build-manifest.json"
+mkdir -p "$destination/license" "$destination/locks"
+cp "$source_dir/$license_file" "$destination/license/LICENSE"
+if [[ -f "$safe_home/license-basis/MPVKit-LICENSE" ]]; then
+  cp "$safe_home/license-basis/MPVKit-LICENSE" "$destination/license/MPVKit-LICENSE"
+fi
+for relative in gradle/wrapper/gradle-wrapper.properties gradle/libs.versions.toml; do
+  [[ -f "$source_dir/$relative" ]] && cp "$source_dir/$relative" "$destination/locks/$(basename "$relative")"
+done
+python3 - "$target_abs" "$destination/source-metadata.json" "$version" "$build_number" "$request_id" <<'PY'
+import json, pathlib, sys
+target_path, output, version, build, request = sys.argv[1:]
+target = json.loads(pathlib.Path(target_path).read_text(encoding="utf-8"))
+pathlib.Path(output).write_text(json.dumps({
+    "build_mode": "local_xcode",
+    "embedded_build": build,
+    "embedded_version": version,
+    "request_id": request,
+    "source": target["source"],
+    "source_patch": target["source_patch"],
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+(cd "$destination" && shasum -a 256 "$(basename "$ipa")" > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+digest="$(shasum -a 256 "$ipa" | awk '{print $1}')"
+printf 'Unsigned IPA: %s\nSHA-256: %s\nRequest ID: %s\nBuild mode: local Xcode\n' "$ipa" "$digest" "$request_id"

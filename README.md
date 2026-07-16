@@ -17,14 +17,22 @@ The Nuvio targets use Xcode 26.3 and a physical-device Debug archive so they can
 ```bash
 bin/probe-source OWNER/REPOSITORY REF
 python3 scripts/validate_target.py targets/SELECTED_TARGET.json
+# Free ephemeral GitHub-hosted build with fresh-runner verification
 bin/build-target targets/SELECTED_TARGET.json
+
+# Local build using the target's exact Xcode version
+bin/build-local targets/SELECTED_TARGET.json --xcode /Applications/Xcode_26.3.app
 ```
 
-The build dispatcher requires a clean `main` exactly matching `origin/main`, the authorized public builder repository, and authenticated GitHub CLI. Successful artifacts are downloaded under `dist/REQUEST_ID/`, reverified locally, and reported with an absolute path and SHA-256.
+Both dispatchers require a clean working tree and an explicitly selected committed target. The cloud dispatcher additionally requires `main` to match `origin/main`, the authorized public builder repository, and authenticated GitHub CLI. Successful artifacts are written under `dist/REQUEST_ID/`, verified, and reported with an absolute path and SHA-256.
+
+`bin/build-local` requires macOS and the exact Xcode version declared by the selected target. It clones the immutable source into a temporary directory, applies any checksum-pinned target patch, builds a generic physical-device archive with signing disabled, strips nested signatures, packages one IPA, and verifies it twice locally. It does not use GitHub Actions and can be faster on a sufficiently capable Mac. It will not install Xcode or silently substitute another Xcode version.
 
 ## Threat model
 
 Public source builds may execute arbitrary upstream Gradle, Xcode, dependency, or project-generation code. The builder uses ephemeral GitHub-hosted runners, no secrets, read-only tokens, nonpersistent checkout credentials, isolated directories, and a scrubbed child-process environment. This is not a complete sandbox. A separate fresh runner validates the quarantined IPA before publishing the success artifact.
+
+The local-Xcode route executes that untrusted upstream code on the user's Mac. It uses isolated temporary directories and a scrubbed child-process environment, but those controls are not a sandbox. Unlike the cloud route, local verification occurs on the same machine as the build and therefore does not provide fresh-runner isolation. Do not run the local route while sensitive credentials are exposed to broadly readable files or services.
 
 ## Output
 

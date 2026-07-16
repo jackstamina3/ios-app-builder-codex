@@ -32,6 +32,7 @@ def main():
     parser.add_argument("--output-dir", help="workflow mode: discover standard files in this directory")
     parser.add_argument("--request-id")
     parser.add_argument("--run-id")
+    parser.add_argument("--build-mode", choices=("github_actions", "local_xcode"), default="github_actions")
     parser.add_argument("--submodules", help="optional JSON array of pinned submodules")
     args = parser.parse_args()
 
@@ -92,6 +93,7 @@ def main():
             "patch": target.get("source_patch"),
         },
         "build": {
+            "mode": args.build_mode,
             "runner": target.get("runner"),
             "xcode_version": target.get("xcode_version"),
             "configuration": target.get("configuration"),
