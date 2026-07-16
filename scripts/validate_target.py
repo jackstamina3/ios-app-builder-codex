@@ -25,6 +25,7 @@ COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+@-]{0,199}$")
 SPDX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]{0,99}$")
 XCODE_RE = re.compile(r"^[0-9]{1,2}\.[0-9]{1,2}(?:\.[0-9]{1,2})?$")
+XCODE_BUILD_RE = re.compile(r"^[0-9]{1,3}[A-Z][0-9]{1,6}[a-z]?$")
 SETTING_RE = re.compile(r"^[A-Z0-9_]+$")
 ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 ADAPTER_RE = re.compile(r"^adapters/[A-Za-z0-9_.-]+$")
@@ -39,7 +40,7 @@ BUILD_ACTIONS = {"archive", "build"}
 BOOTSTRAP_KINDS = {"none", "swiftpm", "cocoapods", "carthage", "adapter"}
 
 ROOT_KEYS = {
-    "schema_version", "source", "source_patch", "runner", "xcode_version",
+    "schema_version", "source", "source_patch", "runner", "xcode_version", "xcode_build",
     "working_directory", "container", "scheme", "configuration",
     "build_action", "bootstrap", "build_environment",
     "extra_build_settings", "output",
@@ -81,11 +82,13 @@ def _fail(path: str, message: str) -> NoReturn:
     raise ValidationError(f"{path}: {message}")
 
 
-def _object(value: Any, path: str, keys: set[str]) -> dict[str, Any]:
+def _object(
+    value: Any, path: str, keys: set[str], *, optional: set[str] | None = None
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         _fail(path, "must be an object")
     unknown = set(value) - keys
-    missing = keys - set(value)
+    missing = keys - (optional or set()) - set(value)
     if unknown:
         _fail(path, f"unknown key(s): {', '.join(sorted(unknown))}")
     if missing:
@@ -185,7 +188,7 @@ def validate_manifest(
     check_adapter: bool = True,
 ) -> dict[str, Any]:
     """Validate and return *data*. Raises ValidationError on the first error."""
-    root = _object(data, "$", ROOT_KEYS)
+    root = _object(data, "$", ROOT_KEYS, optional={"xcode_build"})
     if type(root["schema_version"]) is not int or root["schema_version"] != 1:
         _fail("schema_version", "must equal integer 1")
 
@@ -236,6 +239,11 @@ def validate_manifest(
     xcode = _string(root["xcode_version"], "xcode_version")
     if not XCODE_RE.fullmatch(xcode):
         _fail("xcode_version", "must look like 16.2 or 16.2.1")
+    xcode_build = root.get("xcode_build")
+    if xcode_build is not None:
+        xcode_build = _string(xcode_build, "xcode_build", maximum=16)
+        if not XCODE_BUILD_RE.fullmatch(xcode_build):
+            _fail("xcode_build", "must be an exact Apple build such as 17F113")
     _relative_path(root["working_directory"], "working_directory", allow_dot=True)
 
     container = _object(root["container"], "container", CONTAINER_KEYS)
@@ -290,6 +298,8 @@ def validate_manifest(
             f"{base_name}.json",
             f"{base_name}__xcode{xcode}.json",
         }
+        if xcode_build is not None:
+            expected_names.add(f"{base_name}__xcode{xcode}-{xcode_build}.json")
         if manifest_path.name not in expected_names or manifest_path.parent.name != "targets":
             rendered = " or ".join(f"targets/{name}" for name in sorted(expected_names))
             _fail("target", f"must be named {rendered}")
@@ -345,6 +355,7 @@ def workflow_outputs(data: dict[str, Any]) -> dict[str, str]:
         "license_spdx": data["source"]["license_spdx"],
         "license_file": data["source"]["license_file"],
         "xcode_version": data["xcode_version"],
+        "xcode_build": data.get("xcode_build", ""),
         "working_directory": data["working_directory"],
         "container_type": data["container"]["type"],
         "container_path": data["container"]["path"],

@@ -56,6 +56,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertRegex(text, r"(?m)^  build:\n")
         self.assertRegex(text, r"(?m)^  verify:\n")
         self.assertIn("runs-on: ${{ needs.plan.outputs.runner }}", text)
+        self.assertIn("Target requires Xcode build", text)
         self.assertIn("name: quarantine-${{ inputs.request_id }}", text)
         self.assertIn("name: unsigned-ipa-${{ inputs.request_id }}", text)
 

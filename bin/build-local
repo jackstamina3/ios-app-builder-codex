@@ -24,6 +24,7 @@ python3 scripts/validate_target.py "$target" >/dev/null
 
 target_abs="$root/$target"
 requested_xcode="$(jq -r '.xcode_version' "$target_abs")"
+requested_xcode_build="$(jq -r '.xcode_build // empty' "$target_abs")"
 if [[ -z "$xcode_app" ]]; then
   if [[ -n "${DEVELOPER_DIR:-}" ]]; then
     developer_dir=$DEVELOPER_DIR
@@ -42,10 +43,15 @@ fi
 [[ -d "$developer_dir" ]] || { echo "Invalid Xcode developer directory: $developer_dir" >&2; exit 69; }
 
 actual_xcode="$(DEVELOPER_DIR="$developer_dir" xcodebuild -version | awk 'NR==1 {print $2}')"
+actual_xcode_build="$(DEVELOPER_DIR="$developer_dir" xcodebuild -version | awk 'NR==2 {print $3}')"
 [[ "$actual_xcode" == "$requested_xcode" ]] || {
   echo "Target requires Xcode $requested_xcode, but selected Xcode is $actual_xcode" >&2
   exit 69
 }
+if [[ -n "$requested_xcode_build" && "$actual_xcode_build" != "$requested_xcode_build" ]]; then
+  echo "Target requires Xcode build $requested_xcode_build, but selected Xcode build is $actual_xcode_build" >&2
+  exit 69
+fi
 DEVELOPER_DIR="$developer_dir" xcrun --sdk iphoneos --show-sdk-version >/dev/null
 
 request_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"

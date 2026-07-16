@@ -96,6 +96,7 @@ def main():
             "mode": args.build_mode,
             "runner": target.get("runner"),
             "xcode_version": target.get("xcode_version"),
+            "xcode_build": target.get("xcode_build"),
             "configuration": target.get("configuration"),
             "distribution": target.get("build_environment", {}).get("NUVIO_IOS_DISTRIBUTION"),
             "request_id": args.request_id or os.environ.get("INPUT_REQUEST_ID"),

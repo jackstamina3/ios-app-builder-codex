@@ -35,6 +35,7 @@ jobs:
       source_ref: ${{ steps.target.outputs.source_ref }}
       source_commit: ${{ steps.target.outputs.source_commit }}
       xcode_version: ${{ steps.target.outputs.xcode_version }}
+      xcode_build: ${{ steps.target.outputs.xcode_build }}
       license_file: ${{ steps.target.outputs.license_file }}
       expected_app_bundle: ${{ steps.target.outputs.expected_app_bundle }}
       builder_sha: ${{ steps.revision.outputs.builder_sha }}
@@ -82,6 +83,7 @@ jobs:
       SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
       SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
       XCODE_VERSION: ${{ needs.plan.outputs.xcode_version }}
+      XCODE_BUILD: ${{ needs.plan.outputs.xcode_build }}
       LICENSE_FILE: ${{ needs.plan.outputs.license_file }}
       EXPECTED_APP_BUNDLE: ${{ needs.plan.outputs.expected_app_bundle }}
     steps:
@@ -117,6 +119,11 @@ jobs:
             exit 1
           fi
           DEVELOPER_DIR="$developer_dir" xcodebuild -version
+          actual_xcode_build="$(DEVELOPER_DIR="$developer_dir" xcodebuild -version | awk 'NR==2 {print $3}')"
+          if [[ -n "$XCODE_BUILD" && "$actual_xcode_build" != "$XCODE_BUILD" ]]; then
+            echo "Target requires Xcode build $XCODE_BUILD, but runner has $actual_xcode_build" >&2
+            exit 1
+          fi
           DEVELOPER_DIR="$developer_dir" xcrun --sdk iphoneos --show-sdk-version
 
           {

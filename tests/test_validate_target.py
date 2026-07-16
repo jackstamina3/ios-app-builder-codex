@@ -101,6 +101,14 @@ class TargetValidationTests(unittest.TestCase):
     def test_rejects_unsupported_runner_and_xcode(self) -> None:
         self.assert_invalid(lambda d: d.update(runner="self-hosted"), "must be one of")
         self.assert_invalid(lambda d: d.update(xcode_version="latest"), "must look like")
+        self.assert_invalid(lambda d: d.update(xcode_build="rc2"), "exact Apple build")
+
+    def test_accepts_exact_xcode_build(self) -> None:
+        data = valid_manifest()
+        data["xcode_build"] = "17F113"
+        result = validate_target.validate_manifest(data, check_adapter=False)
+        self.assertEqual(result["xcode_build"], "17F113")
+        self.assertEqual(validate_target.workflow_outputs(result)["xcode_build"], "17F113")
 
     def test_accepts_standard_macos_26_runners(self) -> None:
         for runner in ("macos-26", "macos-26-intel"):
@@ -171,6 +179,9 @@ class TargetValidationTests(unittest.TestCase):
         validate_target.validate_manifest(data, manifest_path=good, check_adapter=False)
         versioned = ROOT / "targets" / "NuvioMedia__NuvioMobile__70004b7__xcode26.3.json"
         validate_target.validate_manifest(data, manifest_path=versioned, check_adapter=False)
+        data["xcode_build"] = "17C529"
+        exact = ROOT / "targets" / "NuvioMedia__NuvioMobile__70004b7__xcode26.3-17C529.json"
+        validate_target.validate_manifest(data, manifest_path=exact, check_adapter=False)
         with self.assertRaisesRegex(validate_target.ValidationError, "must be named"):
             validate_target.validate_manifest(
                 data,

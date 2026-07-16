@@ -24,6 +24,7 @@ class LocalBuilderTests(unittest.TestCase):
             "scripts/validate_target.py",
             "Working tree must be clean",
             "Target requires Xcode",
+            "Target requires Xcode build",
             "env -i",
             "scripts/clone_source.sh",
             "scripts/remove_signatures.sh",
