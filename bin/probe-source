@@ -1,15 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage() { echo "Usage: bin/probe-source OWNER/REPOSITORY [REF]" >&2; exit 2; }
-[[ $# -ge 1 && $# -le 2 ]] || usage
-source_repo="$1"
+usage() { echo "Usage: bin/probe-source OWNER/REPOSITORY [REF] [--runner RUNNER] [--xcode VERSION]" >&2; exit 2; }
+[[ $# -ge 1 ]] || usage
+source_repo="$1"; shift
 [[ "$source_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || usage
 gh auth status --hostname github.com >/dev/null
 
-if [[ $# == 2 ]]; then
-  source_ref="$2"
-else
+source_ref=""
+runner="macos-15-intel"
+xcode_version="16.2"
+if [[ $# -gt 0 && "$1" != --* ]]; then
+  source_ref="$1"; shift
+fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --runner)
+      [[ $# -ge 2 ]] || usage
+      runner="$2"; shift 2
+      ;;
+    --xcode)
+      [[ $# -ge 2 ]] || usage
+      xcode_version="$2"; shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+[[ "$runner" =~ ^macos-(15|26)(-intel)?$ ]] || usage
+[[ "$xcode_version" =~ ^[0-9]{1,2}\.[0-9]{1,2}([.][0-9]{1,2})?$ ]] || usage
+
+if [[ -z "$source_ref" ]]; then
   source_ref="$(gh api "repos/$source_repo/releases/latest" --jq .tag_name)"
 fi
 source_commit="$(gh api "repos/$source_repo/commits/$source_ref" --jq .sha)"
@@ -20,7 +40,7 @@ remote_url="$(git remote get-url origin)"
 repo="$(sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##' <<<"$remote_url")"
 request_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-payload="$(jq -n --arg ref main --arg repository "$source_repo" --arg source_ref "$source_ref" --arg commit "$source_commit" --arg request_id "$request_id" '{ref:$ref,inputs:{source_repository:$repository,source_ref:$source_ref,source_commit:$commit,runner:"macos-15-intel",xcode_version:"16.2",request_id:$request_id}}')"
+payload="$(jq -n --arg ref main --arg repository "$source_repo" --arg source_ref "$source_ref" --arg commit "$source_commit" --arg runner "$runner" --arg xcode_version "$xcode_version" --arg request_id "$request_id" '{ref:$ref,inputs:{source_repository:$repository,source_ref:$source_ref,source_commit:$commit,runner:$runner,xcode_version:$xcode_version,request_id:$request_id}}')"
 response="$(printf '%s' "$payload" | gh api --method POST -H 'X-GitHub-Api-Version: 2026-03-10' "repos/$repo/actions/workflows/probe-source.yml/dispatches" --input -)"
 run_id="$(jq -r '.workflow_run_id // empty' <<<"$response")"
 if [[ -z "$run_id" ]]; then
@@ -37,4 +57,3 @@ gh run download "$run_id" --repo "$repo" --name "probe-$request_id" --dir "$dest
 report="$(find "$destination" -name probe-report.json -print -quit)"
 python3 -m json.tool "$report"
 printf 'Probe report: %s\nSource commit: %s\n' "$(cd "$(dirname "$report")" && pwd)/$(basename "$report")" "$source_commit"
-
