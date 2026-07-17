@@ -4,6 +4,11 @@ DerivedData/
 *.xcarchive
 *.xcresult
 *.ipa
+*.apk
+*.aab
+*.jks
+*.keystore
+.gradle/
 *.p12
 *.p8
 *.mobileprovision
@@ -15,4 +20,3 @@ __pycache__/
 probe-output/
 source/
 build/
-

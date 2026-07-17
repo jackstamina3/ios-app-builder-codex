@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "artifact": "android-apk",
+  "source": {
+    "repository": "NuvioMedia/NuvioTV",
+    "ref": "0.7.18",
+    "commit": "849f7020b85971dc3abf7870060737053165ea16",
+    "license_spdx": "GPL-3.0-only",
+    "license_file": "LICENSE"
+  },
+  "source_patch": null,
+  "runner": "ubuntu-24.04",
+  "java_version": "17",
+  "android_sdk": {
+    "compile_sdk": 36,
+    "build_tools": "36.1.0",
+    "ndk": "29.0.14206865"
+  },
+  "working_directory": ".",
+  "gradle": {
+    "wrapper": "gradlew",
+    "distribution_sha256": "20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78",
+    "task": ":app:assembleFullRelease"
+  },
+  "bootstrap": {
+    "kind": "adapter",
+    "adapter": "adapters/NuvioMedia__NuvioTV.sh"
+  },
+  "build_environment": {},
+  "output": {
+    "expected_apk": "app/build/outputs/apk/full/release/app-full-armeabi-v7a-release.apk",
+    "final_name": "NuvioTV-0.7.17-beta-1035-849f702-firetv4kmax2.test-signed.apk",
+    "application_id": "com.nuvio.tv",
+    "variant": "fullRelease",
+    "abi": "armeabi-v7a",
+    "version_name": "0.7.17-beta",
+    "version_code": 1035
+  },
+  "signing": {
+    "mode": "ephemeral_test",
+    "minimum_scheme": "v2"
+  },
+  "device_profile": "firetv-stick-4k-max-gen2"
+}

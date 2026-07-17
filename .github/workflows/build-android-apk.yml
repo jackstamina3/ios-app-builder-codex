@@ -1,0 +1,287 @@
+name: Build and verify Fire TV APK
+
+run-name: Build Android ${{ inputs.target }} (${{ inputs.request_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Committed Android target under targets/android/
+        required: true
+        type: string
+      request_id:
+        description: Canonical lowercase UUID used to correlate this run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-build-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Validate committed Android target
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_REQUEST_ID: ${{ inputs.request_id }}
+    outputs:
+      runner: ${{ steps.target.outputs.runner }}
+      source_repository: ${{ steps.target.outputs.source_repository }}
+      source_ref: ${{ steps.target.outputs.source_ref }}
+      source_commit: ${{ steps.target.outputs.source_commit }}
+      license_file: ${{ steps.target.outputs.license_file }}
+      java_version: ${{ steps.target.outputs.java_version }}
+      compile_sdk: ${{ steps.target.outputs.compile_sdk }}
+      build_tools: ${{ steps.target.outputs.build_tools }}
+      ndk: ${{ steps.target.outputs.ndk }}
+      final_name: ${{ steps.target.outputs.final_name }}
+      builder_sha: ${{ steps.revision.outputs.builder_sha }}
+    steps:
+      - name: Check out immutable builder revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Validate target and emit allowlisted plan
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$INPUT_TARGET" =~ ^targets/android/[A-Za-z0-9_.-]+\.json$ ]]
+          [[ "$INPUT_TARGET" != *..* ]]
+          python3 scripts/validate_android_target.py "$INPUT_TARGET" \
+            --request-id "$INPUT_REQUEST_ID" --github-output "$GITHUB_OUTPUT"
+
+      - name: Record immutable builder revision
+        id: revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          builder_sha="$(git rev-parse HEAD)"
+          [[ "$builder_sha" == "$GITHUB_SHA" ]]
+          printf 'builder_sha=%s\n' "$builder_sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build quarantined test APK
+    needs: plan
+    runs-on: ${{ needs.plan.outputs.runner }}
+    timeout-minutes: 90
+    env:
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_REQUEST_ID: ${{ inputs.request_id }}
+      SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}
+      SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
+      SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
+      LICENSE_FILE: ${{ needs.plan.outputs.license_file }}
+      JAVA_VERSION: ${{ needs.plan.outputs.java_version }}
+      COMPILE_SDK: ${{ needs.plan.outputs.compile_sdk }}
+      BUILD_TOOLS_VERSION: ${{ needs.plan.outputs.build_tools }}
+      NDK_VERSION: ${{ needs.plan.outputs.ndk }}
+    steps:
+      - name: Check out immutable builder revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.builder_sha }}
+
+      - name: Revalidate target and installed toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${{ needs.plan.outputs.builder_sha }}" ]]
+          python3 scripts/validate_android_target.py "$INPUT_TARGET" --request-id "$INPUT_REQUEST_ID" >/dev/null
+          java_home="${JAVA_HOME_17_X64:-}"
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          [[ -n "$java_home" && -x "$java_home/bin/java" ]]
+          [[ -n "$sdk_root" && -d "$sdk_root" ]]
+          [[ -f "$sdk_root/platforms/android-$COMPILE_SDK/android.jar" ]]
+          [[ -x "$sdk_root/build-tools/$BUILD_TOOLS_VERSION/apksigner" ]]
+          [[ -x "$sdk_root/build-tools/$BUILD_TOOLS_VERSION/zipalign" ]]
+          [[ -x "$sdk_root/cmdline-tools/latest/bin/apkanalyzer" ]]
+          [[ -d "$sdk_root/ndk/$NDK_VERSION" ]]
+          actual_java="$("$java_home/bin/java" -version 2>&1 | sed -n '1s/.*version "\([0-9]*\).*/\1/p')"
+          [[ "$actual_java" == "$JAVA_VERSION" ]]
+          safe_home="$RUNNER_TEMP/android-safe-home"
+          source_dir="$RUNNER_TEMP/android-source"
+          build_dir="$RUNNER_TEMP/android-build"
+          output_dir="$RUNNER_TEMP/android-quarantine"
+          diagnostics_dir="$RUNNER_TEMP/android-diagnostics"
+          isolated_tmp="$RUNNER_TEMP/android-tmp"
+          mkdir -p "$safe_home" "$source_dir" "$build_dir" "$output_dir" "$diagnostics_dir" "$isolated_tmp"
+          {
+            printf 'SELECTED_JAVA_HOME=%s\n' "$java_home"
+            printf 'SELECTED_ANDROID_SDK_ROOT=%s\n' "$sdk_root"
+            printf 'SAFE_HOME=%s\n' "$safe_home"
+            printf 'SOURCE_DIR=%s\n' "$source_dir"
+            printf 'BUILD_DIR=%s\n' "$build_dir"
+            printf 'OUTPUT_DIR=%s\n' "$output_dir"
+            printf 'DIAGNOSTICS_DIR=%s\n' "$diagnostics_dir"
+            printf 'ISOLATED_TMPDIR=%s\n' "$isolated_tmp"
+            printf 'TARGET_JSON=%s/%s\n' "$GITHUB_WORKSPACE" "$INPUT_TARGET"
+          } >> "$GITHUB_ENV"
+
+      - name: Clone exact authorized public source
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_REPOSITORY="$SOURCE_REPOSITORY" SOURCE_REF="$SOURCE_REF" EXPECTED_SHA="$SOURCE_COMMIT" \
+            SOURCE_DIR="$SOURCE_DIR" SUBMODULE_STATUS_FILE="$OUTPUT_DIR/submodules.txt" \
+            scripts/clone_source.sh
+          python3 - "$SOURCE_DIR" "$LICENSE_FILE" <<'PY'
+          import pathlib, sys
+          root = pathlib.Path(sys.argv[1]).resolve()
+          license_file = (root / sys.argv[2]).resolve(strict=True)
+          license_file.relative_to(root)
+          if not license_file.is_file():
+              raise SystemExit("source license is not a regular file")
+          PY
+          python3 scripts/record_submodules.py "$SOURCE_DIR" "$OUTPUT_DIR/submodules.json"
+          git -C "$SOURCE_DIR" remote remove origin
+
+      - name: Build and sign with disposable test key
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -i \
+            PATH="$SELECTED_JAVA_HOME/bin:$SELECTED_ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$SELECTED_ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION:/usr/local/bin:/usr/bin:/bin" \
+            HOME="$SAFE_HOME" SAFE_HOME="$SAFE_HOME" TMPDIR="$ISOLATED_TMPDIR" \
+            USER=runner LOGNAME=runner SHELL=/bin/bash LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 CI=1 \
+            JAVA_HOME="$SELECTED_JAVA_HOME" ANDROID_SDK_ROOT="$SELECTED_ANDROID_SDK_ROOT" \
+            BUILDER_DIR="$GITHUB_WORKSPACE" SOURCE_DIR="$SOURCE_DIR" BUILD_DIR="$BUILD_DIR" \
+            OUTPUT_DIR="$OUTPUT_DIR" DIAGNOSTICS_DIR="$DIAGNOSTICS_DIR" TARGET_JSON="$TARGET_JSON" \
+            REQUEST_ID="$INPUT_REQUEST_ID" \
+            /bin/bash --noprofile --norc scripts/build_android_apk.sh
+
+      - name: Upload quarantined APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-quarantine-${{ inputs.request_id }}
+          path: |
+            ${{ env.OUTPUT_DIR }}/*.test-signed.apk
+            ${{ env.OUTPUT_DIR }}/build-verification.json
+            ${{ env.OUTPUT_DIR }}/ephemeral-certificate-sha256.txt
+            ${{ env.OUTPUT_DIR }}/submodules.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload redacted Android diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-build-diagnostics-${{ inputs.request_id }}
+          path: ${{ env.DIAGNOSTICS_DIR }}/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9
+
+  verify:
+    name: Verify quarantined APK on fresh runner
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_REQUEST_ID: ${{ inputs.request_id }}
+      SOURCE_REPOSITORY: ${{ needs.plan.outputs.source_repository }}
+      SOURCE_REF: ${{ needs.plan.outputs.source_ref }}
+      SOURCE_COMMIT: ${{ needs.plan.outputs.source_commit }}
+      LICENSE_FILE: ${{ needs.plan.outputs.license_file }}
+      BUILD_TOOLS_VERSION: ${{ needs.plan.outputs.build_tools }}
+      COMPILE_SDK: ${{ needs.plan.outputs.compile_sdk }}
+      NDK_VERSION: ${{ needs.plan.outputs.ndk }}
+      FINAL_NAME: ${{ needs.plan.outputs.final_name }}
+    steps:
+      - name: Check out immutable builder revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.builder_sha }}
+
+      - name: Download only this run's quarantine
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: android-quarantine-${{ inputs.request_id }}
+          path: ${{ runner.temp }}/android-quarantine
+
+      - name: Revalidate target and artifact shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_android_target.py "$INPUT_TARGET" --request-id "$INPUT_REQUEST_ID" >/dev/null
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          [[ -n "$sdk_root" && -x "$sdk_root/build-tools/$BUILD_TOOLS_VERSION/apksigner" ]]
+          [[ -x "$sdk_root/cmdline-tools/latest/bin/apkanalyzer" ]]
+          quarantine="$RUNNER_TEMP/android-quarantine"
+          [[ -f "$quarantine/$FINAL_NAME" && ! -L "$quarantine/$FINAL_NAME" ]]
+          [[ -f "$quarantine/ephemeral-certificate-sha256.txt" ]]
+          [[ -f "$quarantine/build-verification.json" ]]
+          [[ "$(find "$quarantine" -maxdepth 1 -type f -name '*.apk' | wc -l)" == 1 ]]
+          output="$RUNNER_TEMP/android-final"
+          source_dir="$RUNNER_TEMP/android-verify-source"
+          mkdir -p "$output" "$source_dir"
+          {
+            printf 'SELECTED_ANDROID_SDK_ROOT=%s\n' "$sdk_root"
+            printf 'QUARANTINE_DIR=%s\n' "$quarantine"
+            printf 'FINAL_OUTPUT_DIR=%s\n' "$output"
+            printf 'VERIFY_SOURCE_DIR=%s\n' "$source_dir"
+          } >> "$GITHUB_ENV"
+
+      - name: Perform independent full Fire TV verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cert_sha="$(sed -n '1p' "$QUARANTINE_DIR/ephemeral-certificate-sha256.txt")"
+          python3 scripts/verify_android_apk.py "$QUARANTINE_DIR/$FINAL_NAME" "$INPUT_TARGET" \
+            --apkanalyzer "$SELECTED_ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer" \
+            --apksigner "$SELECTED_ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/apksigner" \
+            --expected-cert-sha256 "$cert_sha" --output "$FINAL_OUTPUT_DIR/fresh-verification.json" >/dev/null
+          python3 - "$QUARANTINE_DIR/build-verification.json" "$FINAL_OUTPUT_DIR/fresh-verification.json" <<'PY'
+          import json, pathlib, sys
+          first, fresh = (json.loads(pathlib.Path(path).read_text()) for path in sys.argv[1:])
+          for key in ("sha256", "signer_certificate_sha256", "status"):
+              if first.get(key) != fresh.get(key):
+                  raise SystemExit(f"build and fresh verification disagree on {key}")
+          PY
+          cp "$QUARANTINE_DIR/$FINAL_NAME" "$FINAL_OUTPUT_DIR/$FINAL_NAME"
+
+      - name: Recover license and locks from exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_REPOSITORY="$SOURCE_REPOSITORY" SOURCE_REF="$SOURCE_REF" EXPECTED_SHA="$SOURCE_COMMIT" \
+            SOURCE_DIR="$VERIFY_SOURCE_DIR" SUBMODULE_STATUS_FILE="$RUNNER_TEMP/verify-submodules.txt" \
+            scripts/clone_source.sh
+          python3 scripts/record_submodules.py "$VERIFY_SOURCE_DIR" "$FINAL_OUTPUT_DIR/submodules.json"
+          mkdir -p "$FINAL_OUTPUT_DIR/license" "$FINAL_OUTPUT_DIR/locks"
+          cp "$VERIFY_SOURCE_DIR/$LICENSE_FILE" "$FINAL_OUTPUT_DIR/license/LICENSE"
+          for relative in gradle/wrapper/gradle-wrapper.properties gradle/libs.versions.toml gradle/verification-metadata.xml; do
+            [[ -f "$VERIFY_SOURCE_DIR/$relative" ]] && cp "$VERIFY_SOURCE_DIR/$relative" "$FINAL_OUTPUT_DIR/locks/$(basename "$relative")"
+          done
+          cp "$INPUT_TARGET" "$FINAL_OUTPUT_DIR/target.json"
+
+      - name: Write final manifest and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/write_android_build_manifest.py \
+            --target "$INPUT_TARGET" --apk "$FINAL_OUTPUT_DIR/$FINAL_NAME" \
+            --verification "$FINAL_OUTPUT_DIR/fresh-verification.json" \
+            --submodules "$FINAL_OUTPUT_DIR/submodules.json" --request-id "$INPUT_REQUEST_ID" \
+            --run-id "$GITHUB_RUN_ID" --output "$FINAL_OUTPUT_DIR/build-manifest.json"
+          (cd "$FINAL_OUTPUT_DIR" && sha256sum "$FINAL_NAME" > SHA256SUMS && sha256sum -c SHA256SUMS)
+
+      - name: Publish verified test-signed APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-signed-apk-${{ inputs.request_id }}
+          path: ${{ env.FINAL_OUTPUT_DIR }}/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

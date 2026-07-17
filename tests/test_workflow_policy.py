@@ -13,7 +13,12 @@ class WorkflowPolicyTests(unittest.TestCase):
         paths = sorted(WORKFLOWS.glob("*.yml"))
         self.assertEqual(
             [path.name for path in paths],
-            ["build-unsigned-ipa.yml", "probe-source.yml"],
+            [
+                "build-android-apk.yml",
+                "build-unsigned-ipa.yml",
+                "probe-android-source.yml",
+                "probe-source.yml",
+            ],
         )
         return {path.name: path.read_text(encoding="utf-8") for path in paths}
 
@@ -59,6 +64,20 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertIn("Target requires Xcode build", text)
         self.assertIn("name: quarantine-${{ inputs.request_id }}", text)
         self.assertIn("name: unsigned-ipa-${{ inputs.request_id }}", text)
+
+    def test_android_build_has_quarantine_fresh_verify_and_ephemeral_signing(self):
+        text = self.workflow_texts()["build-android-apk.yml"]
+        self.assertRegex(text, r"(?m)^  plan:\n")
+        self.assertRegex(text, r"(?m)^  build:\n")
+        self.assertRegex(text, r"(?m)^  verify:\n")
+        self.assertIn("runs-on: ${{ needs.plan.outputs.runner }}", text)
+        self.assertIn("name: android-quarantine-${{ inputs.request_id }}", text)
+        self.assertIn("name: test-signed-apk-${{ inputs.request_id }}", text)
+        self.assertIn("scripts/build_android_apk.sh", text)
+        self.assertIn("Perform independent full Fire TV verification", text)
+        self.assertNotIn("secrets.", text)
+        self.assertNotIn("sdkmanager", text)
+        self.assertNotIn("debug.keystore", text)
 
 
 if __name__ == "__main__":

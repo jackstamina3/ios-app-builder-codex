@@ -1,0 +1,18 @@
+{
+  "profile_version": 1,
+  "id": "firetv-stick-4k-max-gen2",
+  "manufacturer": "Amazon",
+  "product": "Fire TV Stick 4K Max (2nd generation)",
+  "model": "AFTKRT",
+  "fire_os": 8,
+  "api_level": 30,
+  "required_apk_abi": "armeabi-v7a",
+  "memory_gb": 2,
+  "requires_leanback_launcher": true,
+  "requires_tv_banner": true,
+  "requires_touchscreen_false": true,
+  "sources": [
+    "https://developer.amazon.com/docs/device-specs/device-specifications-fire-tv-streaming-media-player.html?v=ftvstick4kmax_gen2_16",
+    "https://developer.amazon.com/docs/fire-tv/fire-os-8.html"
+  ]
+}

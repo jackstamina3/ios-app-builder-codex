@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jackstamina3/ios-app-builder/schemas/android-target.schema.json",
+  "title": "Android test-signed APK build target",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact",
+    "source",
+    "source_patch",
+    "runner",
+    "java_version",
+    "android_sdk",
+    "working_directory",
+    "gradle",
+    "bootstrap",
+    "build_environment",
+    "output",
+    "signing",
+    "device_profile"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact": { "const": "android-apk" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "ref", "commit", "license_spdx", "license_file"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "maxLength": 201 },
+        "ref": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/+@-]{0,199}$" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "license_spdx": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]{0,99}$" },
+        "license_file": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "source_patch": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256", "reason"],
+          "properties": {
+            "path": { "type": "string", "pattern": "^patches/[A-Za-z0-9_.-]+\\.patch$" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+          }
+        }
+      ]
+    },
+    "runner": { "const": "ubuntu-24.04" },
+    "java_version": { "const": "17" },
+    "android_sdk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compile_sdk", "build_tools", "ndk"],
+      "properties": {
+        "compile_sdk": { "type": "integer", "minimum": 24, "maximum": 99 },
+        "build_tools": { "type": "string", "pattern": "^[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{1,2}$" },
+        "ndk": { "type": "string", "pattern": "^[0-9]{1,2}\\.[0-9]+\\.[0-9]+$" }
+      }
+    },
+    "working_directory": { "$ref": "#/$defs/relativeDirectory" },
+    "gradle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wrapper", "distribution_sha256", "task"],
+      "properties": {
+        "wrapper": { "$ref": "#/$defs/relativePath" },
+        "distribution_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "task": { "type": "string", "pattern": "^:[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)*$", "maxLength": 200 }
+      }
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "adapter"],
+      "properties": {
+        "kind": { "enum": ["none", "adapter"] },
+        "adapter": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^adapters/[A-Za-z0-9_.-]+$", "maxLength": 220 }
+          ]
+        }
+      }
+    },
+    "build_environment": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
+      "additionalProperties": { "type": "string", "maxLength": 4096, "pattern": "^[^\\u0000\\r\\n]*$" }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_apk",
+        "final_name",
+        "application_id",
+        "variant",
+        "abi",
+        "version_name",
+        "version_code"
+      ],
+      "properties": {
+        "expected_apk": { "$ref": "#/$defs/relativePath" },
+        "final_name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+\\.test-signed\\.apk$", "maxLength": 255 },
+        "application_id": { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*(?:\\.[a-zA-Z][a-zA-Z0-9_]*)+$", "maxLength": 255 },
+        "variant": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$", "maxLength": 100 },
+        "abi": { "enum": ["armeabi-v7a", "arm64-v8a", "x86", "x86_64"] },
+        "version_name": { "type": "string", "pattern": "^[A-Za-z0-9._+-]+$", "maxLength": 100 },
+        "version_code": { "type": "integer", "minimum": 1, "maximum": 2100000000 }
+      }
+    },
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "minimum_scheme"],
+      "properties": {
+        "mode": { "const": "ephemeral_test" },
+        "minimum_scheme": { "const": "v2" }
+      }
+    },
+    "device_profile": { "const": "firetv-stick-4k-max-gen2" }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\\\).+$"
+    },
+    "relativeDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?:\\.|(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*\\\\).+)$"
+    }
+  }
+}

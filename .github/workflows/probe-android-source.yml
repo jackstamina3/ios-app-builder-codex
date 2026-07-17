@@ -1,0 +1,87 @@
+name: Probe Android source
+
+run-name: Probe Android ${{ inputs.source_repository }}@${{ inputs.source_commit }} (${{ inputs.request_id }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repository:
+        description: Public GitHub repository in OWNER/REPOSITORY form
+        required: true
+        type: string
+      source_ref:
+        description: Explicit user-selected tag, branch, or commit
+        required: true
+        type: string
+      source_commit:
+        description: Expected immutable commit SHA
+        required: true
+        type: string
+      request_id:
+        description: Canonical lowercase UUID used to correlate this run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-probe-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Statically inspect pinned Android source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+      SOURCE_REF: ${{ inputs.source_ref }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      REQUEST_ID: ${{ inputs.request_id }}
+    steps:
+      - name: Check out immutable builder revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          [[ "$SOURCE_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/+@-]{0,199}$ ]]
+          [[ "$SOURCE_REF" != *..* && "$SOURCE_REF" != *@\{* ]]
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REQUEST_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          source_dir="$RUNNER_TEMP/android-probe-source"
+          output_dir="$RUNNER_TEMP/android-probe-output"
+          mkdir -p "$source_dir" "$output_dir"
+          printf 'SOURCE_DIR=%s\nOUTPUT_DIR=%s\n' "$source_dir" "$output_dir" >> "$GITHUB_ENV"
+
+      - name: Clone exact public source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_REPOSITORY="$SOURCE_REPOSITORY" SOURCE_REF="$SOURCE_REF" EXPECTED_SHA="$SOURCE_COMMIT" \
+            SOURCE_DIR="$SOURCE_DIR" SUBMODULE_STATUS_FILE="$OUTPUT_DIR/submodules.txt" \
+            scripts/clone_source.sh
+          git -C "$SOURCE_DIR" remote remove origin
+
+      - name: Statically inspect source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/probe_android_source.py "$SOURCE_DIR" "$OUTPUT_DIR/android-probe-report.json" \
+            --repository "$SOURCE_REPOSITORY" --ref "$SOURCE_REF" --commit "$SOURCE_COMMIT" >/dev/null
+          python3 -m json.tool "$OUTPUT_DIR/android-probe-report.json" >/dev/null
+
+      - name: Upload Android probe report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-probe-${{ inputs.request_id }}
+          path: ${{ env.OUTPUT_DIR }}/android-probe-report.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 9

@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: bin/install-firetv APK --target targets/android/TARGET.json --device HOST[:PORT] [--android-sdk PATH] [--confirm-install APK_SHA256]" >&2
+  exit 64
+}
+[[ $# -ge 5 ]] || usage
+apk="$1"; shift
+target=""
+device=""
+sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+confirmation=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target) [[ $# -ge 2 ]] || usage; target="$2"; shift 2 ;;
+    --device) [[ $# -ge 2 ]] || usage; device="$2"; shift 2 ;;
+    --android-sdk) [[ $# -ge 2 ]] || usage; sdk="$2"; shift 2 ;;
+    --confirm-install) [[ $# -ge 2 ]] || usage; confirmation="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[[ -n "$target" && -n "$device" ]] || usage
+[[ "$target" =~ ^targets/android/[A-Za-z0-9_.-]+\.json$ && "$target" != *..* ]] || usage
+[[ "$device" =~ ^[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] || { echo "Device must be a hostname or IPv4 address with optional port" >&2; exit 64; }
+if [[ "$device" != *:* ]]; then
+  serial="$device:5555"
+else
+  serial="$device"
+fi
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+python3 scripts/validate_android_target.py "$target" >/dev/null
+[[ -f "$apk" && ! -L "$apk" ]] || { echo "APK must be a regular file" >&2; exit 1; }
+apk="$(cd "$(dirname "$apk")" && pwd)/$(basename "$apk")"
+target_abs="$root/$target"
+if [[ -z "$sdk" && "$(uname -s)" == Darwin ]]; then
+  sdk="$HOME/Library/Android/sdk"
+fi
+[[ -n "$sdk" && "$sdk" == /* && -d "$sdk" ]] || { echo "Android SDK is required" >&2; exit 69; }
+sdk="$(cd "$sdk" && pwd)"
+build_tools="$(jq -r '.android_sdk.build_tools' "$target_abs")"
+apkanalyzer="$sdk/cmdline-tools/latest/bin/apkanalyzer"
+apksigner="$sdk/build-tools/$build_tools/apksigner"
+adb="$sdk/platform-tools/adb"
+[[ -x "$apkanalyzer" && -x "$apksigner" && -x "$adb" ]] || {
+  echo "apkanalyzer, apksigner, and adb are required in the selected Android SDK" >&2; exit 69;
+}
+
+verify_args=("$apk" "$target_abs" --apkanalyzer "$apkanalyzer" --apksigner "$apksigner")
+cert_file="$(dirname "$apk")/ephemeral-certificate-sha256.txt"
+if [[ -f "$cert_file" ]]; then
+  verify_args+=(--expected-cert-sha256 "$(sed -n '1p' "$cert_file")")
+fi
+verification="$(mktemp "${TMPDIR:-/tmp}/firetv-verification.XXXXXX")"
+trap 'rm -f "$verification"' EXIT
+python3 scripts/verify_android_apk.py "${verify_args[@]}" --output "$verification" >/dev/null
+digest="$(shasum -a 256 "$apk" | awk '{print $1}')"
+package="$(jq -r '.manifest.application_id' "$verification")"
+activity="$(jq -r '.manifest.launch_activity' "$verification")"
+if [[ "$activity" == .* ]]; then
+  component="$package/$package$activity"
+elif [[ "$activity" == *.* ]]; then
+  component="$package/$activity"
+else
+  component="$package/$package.$activity"
+fi
+
+if [[ -z "$confirmation" ]]; then
+  printf 'Verified APK: %s\nAPK SHA-256: %s\nDestination device: %s (required model AFTKRT, Fire OS 8/API 30)\nPackage: %s\nPlanned side effects: connect with ADB, refuse if package already exists, install once, launch %s, send five DPAD smoke-test events, and write %s/firetv-smoke-report.json.\nNo device command was run. To approve this exact APK/device operation, rerun with: --confirm-install %s\n' \
+    "$apk" "$digest" "$serial" "$package" "$component" "$(dirname "$apk")" "$digest"
+  exit 3
+fi
+[[ "$confirmation" == "$digest" ]] || { echo "--confirm-install must equal this APK's SHA-256: $digest" >&2; exit 64; }
+
+"$adb" connect "$serial" >/dev/null
+model="$("$adb" -s "$serial" shell getprop ro.product.model | tr -d '\r')"
+api="$("$adb" -s "$serial" shell getprop ro.build.version.sdk | tr -d '\r')"
+abis="$("$adb" -s "$serial" shell getprop ro.product.cpu.abilist | tr -d '\r')"
+[[ "$model" == AFTKRT ]] || { echo "Connected device is $model, expected Amazon AFTKRT" >&2; exit 1; }
+[[ "$api" == 30 ]] || { echo "Connected device API is $api, expected Fire OS 8 / API 30" >&2; exit 1; }
+[[ ",$abis," == *,armeabi-v7a,* ]] || { echo "Connected device does not report armeabi-v7a: $abis" >&2; exit 1; }
+if "$adb" -s "$serial" shell pm path "$package" | grep -q '^package:'; then
+  echo "$package is already installed. Refusing to replace or uninstall it; remove it separately only after explicit data-loss approval." >&2
+  exit 1
+fi
+
+install_output="$("$adb" -s "$serial" install "$apk")"
+grep -q 'Success' <<<"$install_output" || { echo "$install_output" >&2; exit 1; }
+"$adb" -s "$serial" shell am start -n "$component" >/dev/null
+for key in 19 20 21 22 23; do
+  "$adb" -s "$serial" shell input keyevent "$key" >/dev/null
+done
+foreground="$("$adb" -s "$serial" shell dumpsys activity activities | grep -m1 -E 'mResumedActivity|topResumedActivity' | tr -d '\r' || true)"
+[[ "$foreground" == *"$package"* ]] || { echo "Installed app did not remain in the foreground" >&2; exit 1; }
+log_excerpt="$("$adb" -s "$serial" logcat -d -t 300 | grep -F "$package" | tail -n 100 || true)"
+report="$(dirname "$apk")/firetv-smoke-report.json"
+python3 - "$report" "$digest" "$serial" "$model" "$api" "$abis" "$package" "$component" "$foreground" "$log_excerpt" <<'PY'
+import datetime, json, pathlib, sys
+output, digest, device, model, api, abis, package, component, foreground, logs = sys.argv[1:]
+data = {
+    "format_version": 1,
+    "apk_sha256": digest,
+    "device": device,
+    "model": model,
+    "api_level": int(api),
+    "abis": abis.split(","),
+    "package": package,
+    "launch_component": component,
+    "foreground_evidence": foreground,
+    "dpad_events": [19, 20, 21, 22, 23],
+    "filtered_logcat": logs.splitlines(),
+    "installed_without_replacement": True,
+    "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "status": "installed_and_smoke_tested",
+}
+pathlib.Path(output).write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+printf 'Installed and smoke-tested %s on %s. Report: %s\n' "$package" "$serial" "$report"

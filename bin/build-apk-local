@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: bin/build-apk-local targets/android/TARGET.json [--android-sdk /absolute/path]" >&2
+  exit 64
+}
+[[ $# -ge 1 && $# -le 3 ]] || usage
+target="$1"
+[[ "$target" =~ ^targets/android/[A-Za-z0-9_.-]+\.json$ && "$target" != *..* ]] || usage
+sdk=""
+if [[ $# == 3 ]]; then
+  [[ "$2" == --android-sdk ]] || usage
+  sdk="$3"
+elif [[ $# != 1 ]]; then
+  usage
+fi
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+[[ -z "$(git status --porcelain)" ]] || { echo "Working tree must be clean" >&2; exit 1; }
+python3 scripts/validate_android_target.py "$target" >/dev/null
+target_abs="$root/$target"
+
+if [[ -z "$sdk" ]]; then
+  sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+fi
+if [[ -z "$sdk" && "$(uname -s)" == Darwin ]]; then
+  sdk="$HOME/Library/Android/sdk"
+fi
+[[ -n "$sdk" && "$sdk" == /* && -d "$sdk" ]] || {
+  echo "Android SDK not found. Install Android Studio command-line tools and pass --android-sdk /absolute/path." >&2
+  exit 69
+}
+sdk="$(cd "$sdk" && pwd)"
+
+java_version="$(jq -r '.java_version' "$target_abs")"
+if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]]; then
+  selected_java="$JAVA_HOME"
+elif [[ "$(uname -s)" == Darwin && -x /usr/libexec/java_home ]]; then
+  selected_java="$(/usr/libexec/java_home -v "$java_version" 2>/dev/null || true)"
+else
+  selected_java=""
+fi
+[[ -n "$selected_java" && -x "$selected_java/bin/java" && -x "$selected_java/bin/keytool" ]] || {
+  echo "A complete Java $java_version JDK is required" >&2; exit 69;
+}
+actual_java="$("$selected_java/bin/java" -version 2>&1 | sed -n '1s/.*version "\([0-9]*\).*/\1/p')"
+[[ "$actual_java" == "$java_version" ]] || { echo "Target requires Java $java_version, found Java $actual_java" >&2; exit 69; }
+
+compile_sdk="$(jq -r '.android_sdk.compile_sdk' "$target_abs")"
+build_tools="$(jq -r '.android_sdk.build_tools' "$target_abs")"
+ndk="$(jq -r '.android_sdk.ndk' "$target_abs")"
+for tool in "$sdk/build-tools/$build_tools/apksigner" "$sdk/build-tools/$build_tools/zipalign" \
+  "$sdk/cmdline-tools/latest/bin/apkanalyzer"; do
+  [[ -x "$tool" ]] || { echo "Required Android SDK tool is missing: $tool" >&2; exit 69; }
+done
+[[ -f "$sdk/platforms/android-$compile_sdk/android.jar" ]] || { echo "Install Android SDK platform $compile_sdk" >&2; exit 69; }
+[[ -d "$sdk/ndk/$ndk" ]] || { echo "Install Android NDK $ndk" >&2; exit 69; }
+
+request_id="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+destination="$root/dist/$request_id"
+work="$(mktemp -d "${TMPDIR:-/tmp}/android-builder-local.XXXXXX")"
+source_dir="$work/source"
+build_dir="$work/build"
+safe_home="$work/safe-home"
+temp_dir="$work/tmp"
+diagnostics="$destination/diagnostics"
+mkdir -p "$destination" "$diagnostics" "$build_dir" "$safe_home" "$temp_dir"
+cleanup() { rm -rf "$work"; }
+trap cleanup EXIT
+
+echo "WARNING: authorized upstream Gradle code will execute on this Mac. Environment scrubbing is not a sandbox." >&2
+source_repository="$(jq -r '.source.repository' "$target_abs")"
+source_ref="$(jq -r '.source.ref' "$target_abs")"
+source_commit="$(jq -r '.source.commit' "$target_abs")"
+license_file="$(jq -r '.source.license_file' "$target_abs")"
+SOURCE_REPOSITORY="$source_repository" SOURCE_REF="$source_ref" EXPECTED_SHA="$source_commit" \
+  SOURCE_DIR="$source_dir" SUBMODULE_STATUS_FILE="$destination/submodules.txt" scripts/clone_source.sh
+python3 scripts/record_submodules.py "$source_dir" "$destination/submodules.json"
+git -C "$source_dir" remote remove origin
+
+path_value="$selected_java/bin:$sdk/cmdline-tools/latest/bin:$sdk/build-tools/$build_tools:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+env -i \
+  PATH="$path_value" HOME="$safe_home" SAFE_HOME="$safe_home" TMPDIR="$temp_dir" \
+  USER="$(id -un)" LOGNAME="$(id -un)" SHELL=/bin/bash LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 CI=1 \
+  JAVA_HOME="$selected_java" ANDROID_SDK_ROOT="$sdk" \
+  BUILDER_DIR="$root" SOURCE_DIR="$source_dir" BUILD_DIR="$build_dir" OUTPUT_DIR="$destination" \
+  DIAGNOSTICS_DIR="$diagnostics" TARGET_JSON="$target_abs" REQUEST_ID="$request_id" \
+  /bin/bash --noprofile --norc "$root/scripts/build_android_apk.sh"
+
+apk="$destination/$(jq -r '.output.final_name' "$target_abs")"
+cert_sha="$(sed -n '1p' "$destination/ephemeral-certificate-sha256.txt")"
+python3 scripts/verify_android_apk.py "$apk" "$target_abs" \
+  --apkanalyzer "$sdk/cmdline-tools/latest/bin/apkanalyzer" \
+  --apksigner "$sdk/build-tools/$build_tools/apksigner" \
+  --expected-cert-sha256 "$cert_sha" --output "$destination/local-verification.json" >/dev/null
+
+mkdir -p "$destination/license" "$destination/locks"
+cp "$source_dir/$license_file" "$destination/license/LICENSE"
+for relative in gradle/wrapper/gradle-wrapper.properties gradle/libs.versions.toml gradle/verification-metadata.xml; do
+  [[ -f "$source_dir/$relative" ]] && cp "$source_dir/$relative" "$destination/locks/$(basename "$relative")"
+done
+python3 scripts/write_android_build_manifest.py \
+  --target "$target_abs" --apk "$apk" --verification "$destination/local-verification.json" \
+  --submodules "$destination/submodules.json" --request-id "$request_id" \
+  --build-mode local_android_sdk --output "$destination/build-manifest.json"
+(cd "$destination" && shasum -a 256 "$(basename "$apk")" > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+digest="$(shasum -a 256 "$apk" | awk '{print $1}')"
+printf 'Test-signed APK: %s\nSHA-256: %s\nRequest ID: %s\nSource: %s@%s (%s)\nEmbedded version: %s (%s)\nDevice profile: %s\nBuild mode: local Android SDK\n' \
+  "$apk" "$digest" "$request_id" "$source_repository" "$source_ref" "$source_commit" \
+  "$(jq -r '.output.version_name' "$target_abs")" "$(jq -r '.output.version_code' "$target_abs")" \
+  "$(jq -r '.device_profile' "$target_abs")"
