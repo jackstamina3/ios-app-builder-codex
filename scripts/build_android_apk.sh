@@ -96,7 +96,7 @@ actual_gradle_sha="$(shasum -a 256 "$gradle_zip" | awk '{print $1}')"
 gradle_dir="$BUILD_DIR/gradle"
 mkdir -p "$gradle_dir"
 unzip -q "$gradle_zip" -d "$gradle_dir"
-gradle_bin="$(find "$gradle_dir" -mindepth 2 -maxdepth 2 -type f -path '*/bin/gradle' -print -quit)"
+gradle_bin="$(find "$gradle_dir" -mindepth 3 -maxdepth 3 -type f -path '*/bin/gradle' -print -quit)"
 [[ -x "$gradle_bin" ]] || { echo "Verified Gradle distribution did not contain bin/gradle" >&2; exit 1; }
 
 while IFS= read -r entry; do

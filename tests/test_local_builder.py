@@ -59,6 +59,8 @@ class LocalBuilderTests(unittest.TestCase):
             self.assertIn(required, text)
         self.assertNotIn("sdkmanager", text)
         self.assertNotIn("sudo", text)
+        build_script = (ROOT / "scripts" / "build_android_apk.sh").read_text(encoding="utf-8")
+        self.assertIn('-mindepth 3 -maxdepth 3 -type f -path \'*/bin/gradle\'', build_script)
 
     def test_firetv_installer_requires_digest_confirmation_and_refuses_replacement(self) -> None:
         self.assertTrue(FIRETV_INSTALL.stat().st_mode & stat.S_IXUSR)
